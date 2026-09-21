@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "label": "replace-with-provider-name",
+    "model": "replace-with-model-id"
+  },
+  "storage": {
+    "persistentRawAudit": false,
+    "artifactSpoolTtlMinutes": 30,
+    "artifactSpoolMaxBytes": 104857600
+  },
+  "mechanisms": {
+    "actionFusion": false,
+    "onlineContextCompact": false,
+    "observationPack": false,
+    "evidencePreservingReducer": false,
+    "deterministicTransforms": false
+  }
+}
+
