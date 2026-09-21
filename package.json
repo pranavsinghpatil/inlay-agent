@@ -10,7 +10,15 @@
   "scripts": {
     "dev": "node --experimental-strip-types src/server.ts",
     "start": "node --experimental-strip-types src/server.ts",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.86.0",
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
   }
 }
-

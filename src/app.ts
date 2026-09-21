@@ -39,7 +39,7 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
     const upstream = await fetch(upstreamUrl, {
       method: "POST",
       headers: forwardHeaders(request.headers, body.requestId),
-      body: body.bytes,
+      body: new Uint8Array(body.bytes),
       signal: abortController.signal,
     });
     const timeToFirstByteMs = performance.now() - started;
@@ -49,7 +49,7 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
     response.writeHead(upstream.status, upstream.statusText);
 
     if (upstream.body) {
-      await pipeline(Readable.fromWeb(upstream.body), response);
+      await pipeline(Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]), response);
     } else {
       response.end();
     }
@@ -99,4 +99,3 @@ export function createInlayServer(config: ProxyConfig, metrics = new MetricsStor
     sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions." } });
   });
 }
-

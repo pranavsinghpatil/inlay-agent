@@ -6,14 +6,14 @@ It is not a replacement coding agent or a generic LLM wrapper. Its first milesto
 
 ## Current status
 
-**Milestone 1 — transparent proxy:** implemented locally, pending a real Pi/provider protocol spike. All mechanisms are disabled by default.
+**Milestone 1 — transparent proxy and Pi protocol capture:** implemented locally. A real Pi/provider task is still required to freeze the supported protocol contract. All mechanisms are disabled by default.
 
 ## Run locally
 
 1. Copy the variables from `.env.example` into your local shell. Do not commit API keys.
 2. Start the proxy with `node --experimental-strip-types src/server.ts`.
 3. Check `http://127.0.0.1:8787/health`.
-4. Follow [the Pi protocol-spike procedure](docs/protocol-spike.md) before enabling a mechanism.
+4. Run Pi with `-e ./extensions/protocol-spike.ts` and follow [the protocol-spike procedure](docs/protocol-spike.md) before enabling a mechanism.
 
 The proxy exposes `POST /v1/chat/completions`, `GET /health`, and `GET /metrics`; it is loopback-only and retains metrics in memory only.
 
@@ -26,4 +26,3 @@ The proxy exposes `POST /v1/chat/completions`, `GET /health`, and `GET /metrics`
 5. Independently validate context compaction, evidence-preserving reduction, and action fusion.
 
 See [the frozen plan](docs/frozen-plan.md) and [protocol contract](docs/protocol-spike.md). The project is inspired by [SoL-Pi](https://arxiv.org/pdf/2609.20519), but makes no claim of reproducing its mechanisms until each is validated under Inlay's own documented setup.
-
