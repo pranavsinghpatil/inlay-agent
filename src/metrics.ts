@@ -2,6 +2,7 @@ export interface RequestMetric {
   requestId: string;
   startedAt: string;
   durationMs: number;
+  timeToFirstByteMs?: number;
   requestBytes: number;
   responseStatus?: number;
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";
@@ -28,4 +29,3 @@ export class MetricsStore {
     };
   }
 }
-
