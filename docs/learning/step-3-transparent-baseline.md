@@ -1,0 +1,76 @@
+# Step 3: transparent proxy baseline
+
+Goal: establish that one pinned OpenAI Chat Completions provider/model has the same useful Pi behavior both directly and through Inlay. This is not an optimization test.
+
+## Freeze the experiment
+
+Choose exactly one hosted provider and record its public base URL, exact model ID, Pi version, and date in a new sanitized experiment record. Do not record the API key. The provider must support `POST /v1/chat/completions` with server-sent-event streaming.
+
+Set these variables in each PowerShell window; they are deliberately not read from a committed file:
+
+```powershell
+$env:INLAY_PROVIDER_API_KEY = "<your API key>"
+$env:INLAY_PROVIDER_MODEL = "<exact model id>"
+$env:INLAY_PROVIDER_CONTEXT_WINDOW = "<known context window>" # optional; defaults to 128000
+$env:INLAY_PROVIDER_MAX_TOKENS = "<known max output tokens>" # optional; defaults to 8192
+```
+
+## A. Direct control run
+
+Set Pi to the provider's exact OpenAI-compatible `/v1` base URL, then run a small read-only task. This establishes the control using the same Pi provider definition that the proxied run will use.
+
+```powershell
+$env:INLAY_PI_BASE_URL = "https://provider.example/v1"
+corepack pnpm exec pi -e .\extensions\hosted-openai-baseline-provider.ts --provider inlay-hosted --model $env:INLAY_PROVIDER_MODEL "List the files in this project, then state how many TypeScript source files it contains."
+```
+
+Record whether streaming was incremental, whether Pi completed the task, elapsed wall time, and provider-reported usage if Pi exposes it. Do not compare generated wording byte-for-byte: separate model requests are nondeterministic.
+
+## B. Proxied treatment run
+
+In a first PowerShell window, start the transparent proxy. Its upstream is the same exact provider URL used by the direct control.
+
+```powershell
+$env:INLAY_UPSTREAM_BASE_URL = "https://provider.example/v1"
+node --experimental-strip-types src/server.ts
+```
+
+In a second window, set the same key/model values and point Pi at the loopback proxy:
+
+```powershell
+$env:INLAY_PI_BASE_URL = "http://127.0.0.1:8787/v1"
+corepack pnpm exec pi -e .\extensions\hosted-openai-baseline-provider.ts --provider inlay-hosted --model $env:INLAY_PROVIDER_MODEL "List the files in this project, then state how many TypeScript source files it contains."
+Invoke-RestMethod http://127.0.0.1:8787/metrics | ConvertTo-Json -Depth 5
+```
+
+## Pass criteria
+
+- Pi receives visibly incremental output in both runs.
+- Both runs complete the same small task successfully.
+- The proxied run records a successful request and timing in `/metrics`.
+- When the model chooses a tool call, Pi receives and executes it normally; Inlay does not parse or rewrite the SSE event stream.
+- Provider HTTP statuses, error body, and response headers pass through unchanged. Inlay adds only `x-inlay-request-id` to the downstream response and forwarding request.
+- Usage fields, if sent by the provider, reach Pi unchanged because all response bytes are streamed verbatim.
+
+The repository test suite verifies byte-preserving request forwarding, incremental SSE delivery including tool-call and usage chunks, and non-2xx error passthrough. The live run establishes compatibility with the selected provider/model.
+
+## Record the result
+
+Create `docs/research/step-3-<provider>-<model>.md` with only sanitized metadata:
+
+```markdown
+# Step 3 transparent baseline
+
+- Date:
+- Pi version:
+- Provider public base URL:
+- Model ID:
+- Direct task outcome / elapsed time / reported usage:
+- Proxied task outcome / elapsed time / reported usage:
+- Proxy metric request ID and timings:
+- Tool-call result (if exercised):
+- Error-path result (if exercised):
+- Verdict: pass or fail, with reason
+```
+
+Never commit prompts containing private source, raw request or response bodies, credentials, or unredacted provider trace IDs.

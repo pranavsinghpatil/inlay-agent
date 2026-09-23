@@ -13,7 +13,7 @@ It is not a replacement coding agent or a generic LLM wrapper. Its first milesto
 1. Copy the variables from `.env.example` into your local shell. Do not commit API keys.
 2. Start the proxy with `node --experimental-strip-types src/server.ts`.
 3. Check `http://127.0.0.1:8787/health`.
-4. Run Pi with `-e ./extensions/protocol-spike.ts` and follow [the protocol-spike procedure](docs/protocol-spike.md) before enabling a mechanism.
+4. Follow [the Step 3 transparent-baseline procedure](docs/learning/step-3-transparent-baseline.md) to compare one direct Pi run with one proxied run before enabling a mechanism.
 
 The proxy exposes `POST /v1/chat/completions`, `GET /health`, and `GET /metrics`; it is loopback-only and retains metrics in memory only.
 
@@ -21,7 +21,7 @@ The proxy exposes `POST /v1/chat/completions`, `GET /health`, and `GET /metrics`
 
 1. Run Pi on one simple read-only task and observe its behavior.
 2. Load the [tiny session-start extension](docs/learning/step-2-tiny-extension.md) and verify one lifecycle event.
-3. Validate transparent proxy streaming.
+3. Validate a transparent proxy baseline with one pinned hosted provider and model.
 4. Establish baseline evaluation.
 5. Add one reversible transformation only after baseline evidence exists.
 
