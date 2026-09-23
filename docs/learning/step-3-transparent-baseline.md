@@ -57,7 +57,7 @@ Invoke-RestMethod http://127.0.0.1:8787/metrics | ConvertTo-Json -Depth 5
 - Both runs complete the same small task successfully.
 - The proxied run records a successful request and timing in `/metrics`.
 - When the model chooses a tool call, Pi receives and executes it normally; Inlay does not parse or rewrite the SSE event stream.
-- Provider HTTP status and response body pass through unchanged. Inlay forwards relevant end-to-end response headers and excludes HTTP hop-by-hop headers; it adds `x-inlay-request-id` to the downstream response and forwarding request.
+- Provider status, error body, and applicable response headers are forwarded unchanged. Inlay excludes HTTP hop-by-hop headers and adds `x-inlay-request-id` to the downstream response and forwarding request.
 - Usage fields, if sent by the provider, reach Pi unchanged because all response bytes are streamed verbatim.
 
 The repository test suite verifies byte-preserving request forwarding, incremental SSE delivery including tool-call and usage chunks, and non-2xx error passthrough. The live run establishes compatibility with the selected provider/model.
