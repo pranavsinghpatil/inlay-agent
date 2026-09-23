@@ -4,16 +4,24 @@ Goal: establish that one pinned OpenAI Chat Completions provider/model has the s
 
 ## Freeze the experiment
 
-Choose exactly one hosted provider and record its public base URL, exact model ID, Pi version, and date in a new sanitized experiment record. Do not record the API key. The provider must support `POST /v1/chat/completions` with server-sent-event streaming.
+Choose exactly one hosted provider and record its public base URL, exact model ID, Pi version, date, model capabilities, and public pricing source in a new sanitized experiment record. Do not record the API key. The provider must support `POST /v1/chat/completions` with server-sent-event streaming.
 
 Set these variables in each PowerShell window; they are deliberately not read from a committed file:
 
 ```powershell
 $env:INLAY_PROVIDER_API_KEY = "<your API key>"
 $env:INLAY_PROVIDER_MODEL = "<exact model id>"
-$env:INLAY_PROVIDER_CONTEXT_WINDOW = "<known context window>" # optional; defaults to 128000
-$env:INLAY_PROVIDER_MAX_TOKENS = "<known max output tokens>" # optional; defaults to 8192
+$env:INLAY_PROVIDER_REASONING = "true" # actual model capability: true or false
+$env:INLAY_PROVIDER_INPUTS = "text" # actual supported inputs: text, or text,image
+$env:INLAY_PROVIDER_CONTEXT_WINDOW = "<published context window>"
+$env:INLAY_PROVIDER_MAX_TOKENS = "<published max output tokens>"
+$env:INLAY_PROVIDER_COST_INPUT = "<published input USD per million tokens>"
+$env:INLAY_PROVIDER_COST_OUTPUT = "<published output USD per million tokens>"
+$env:INLAY_PROVIDER_COST_CACHE_READ = "<published cache-read USD per million tokens>"
+$env:INLAY_PROVIDER_COST_CACHE_WRITE = "<published cache-write USD per million tokens>"
 ```
+
+All metadata is required because Pi's provider schema requires it. Set a cache price to `0` only when the provider documents that the category is free or unavailable; never use `0` to mean unknown. The provider extension does not invent thinking support, token limits, or prices.
 
 ## A. Direct control run
 
@@ -49,7 +57,7 @@ Invoke-RestMethod http://127.0.0.1:8787/metrics | ConvertTo-Json -Depth 5
 - Both runs complete the same small task successfully.
 - The proxied run records a successful request and timing in `/metrics`.
 - When the model chooses a tool call, Pi receives and executes it normally; Inlay does not parse or rewrite the SSE event stream.
-- Provider HTTP statuses, error body, and response headers pass through unchanged. Inlay adds only `x-inlay-request-id` to the downstream response and forwarding request.
+- Provider HTTP status and response body pass through unchanged. Inlay forwards relevant end-to-end response headers and excludes HTTP hop-by-hop headers; it adds `x-inlay-request-id` to the downstream response and forwarding request.
 - Usage fields, if sent by the provider, reach Pi unchanged because all response bytes are streamed verbatim.
 
 The repository test suite verifies byte-preserving request forwarding, incremental SSE delivery including tool-call and usage chunks, and non-2xx error passthrough. The live run establishes compatibility with the selected provider/model.
@@ -65,6 +73,8 @@ Create `docs/research/step-3-<provider>-<model>.md` with only sanitized metadata
 - Pi version:
 - Provider public base URL:
 - Model ID:
+- Model capabilities and token limits source:
+- Public pricing source and rates used:
 - Direct task outcome / elapsed time / reported usage:
 - Proxied task outcome / elapsed time / reported usage:
 - Proxy metric request ID and timings:

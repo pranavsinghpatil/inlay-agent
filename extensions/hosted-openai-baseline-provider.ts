@@ -6,11 +6,31 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function positiveInteger(name: string, fallback: number): number {
-  const value = process.env[name];
-  if (!value) return fallback;
+function positiveInteger(name: string): number {
+  const value = requiredEnvironment(name);
   const parsed = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`[inlay] ${name} must be a positive integer.`);
+  return parsed;
+}
+
+function boolean(name: string): boolean {
+  const value = requiredEnvironment(name).toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`[inlay] ${name} must be true or false.`);
+}
+
+function inputs(): Array<"text" | "image"> {
+  const values = requiredEnvironment("INLAY_PROVIDER_INPUTS").split(",").map((value) => value.trim());
+  if (values.length === 0 || values.some((value) => value !== "text" && value !== "image")) {
+    throw new Error("[inlay] INLAY_PROVIDER_INPUTS must be a comma-separated list containing text and/or image.");
+  }
+  return [...new Set(values)] as Array<"text" | "image">;
+}
+
+function pricePerMillionTokens(name: string): number {
+  const parsed = Number(requiredEnvironment(name));
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`[inlay] ${name} must be a non-negative price per million tokens.`);
   return parsed;
 }
 
@@ -30,11 +50,16 @@ export default function hostedOpenAIBaselineProvider(pi: ExtensionAPI): void {
     models: [{
       id: model,
       name: `${model} (Inlay baseline)`,
-      reasoning: false,
-      input: ["text"],
-      contextWindow: positiveInteger("INLAY_PROVIDER_CONTEXT_WINDOW", 128_000),
-      maxTokens: positiveInteger("INLAY_PROVIDER_MAX_TOKENS", 8_192),
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      reasoning: boolean("INLAY_PROVIDER_REASONING"),
+      input: inputs(),
+      contextWindow: positiveInteger("INLAY_PROVIDER_CONTEXT_WINDOW"),
+      maxTokens: positiveInteger("INLAY_PROVIDER_MAX_TOKENS"),
+      cost: {
+        input: pricePerMillionTokens("INLAY_PROVIDER_COST_INPUT"),
+        output: pricePerMillionTokens("INLAY_PROVIDER_COST_OUTPUT"),
+        cacheRead: pricePerMillionTokens("INLAY_PROVIDER_COST_CACHE_READ"),
+        cacheWrite: pricePerMillionTokens("INLAY_PROVIDER_COST_CACHE_WRITE"),
+      },
     }],
   });
 }
