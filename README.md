@@ -19,10 +19,10 @@ The proxy exposes `POST /v1/chat/completions`, `GET /health`, and `GET /metrics`
 
 ## Roadmap
 
-1. Validate Pi/provider protocol and transparent streaming.
-2. Add bounded temporary artifacts and ObservationPack.
-3. Add deterministic tool-output transformations with fixtures.
-4. Run a paired task-evaluation pilot.
-5. Independently validate context compaction, evidence-preserving reduction, and action fusion.
+1. Run Pi on one simple read-only task and observe its behavior.
+2. Load the [tiny session-start extension](docs/learning/step-2-tiny-extension.md) and verify one lifecycle event.
+3. Validate transparent proxy streaming.
+4. Establish baseline evaluation.
+5. Add one reversible transformation only after baseline evidence exists.
 
 See [the frozen plan](docs/frozen-plan.md) and [protocol contract](docs/protocol-spike.md). The project is inspired by [SoL-Pi](https://arxiv.org/pdf/2609.20519), but makes no claim of reproducing its mechanisms until each is validated under Inlay's own documented setup.
