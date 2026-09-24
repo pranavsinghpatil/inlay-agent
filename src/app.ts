@@ -4,7 +4,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { ProxyConfig } from "./config.ts";
 import { copyResponseHeaders, forwardHeaders, readBody, sendJson } from "./http.ts";
 import { MetricsStore } from "./metrics.ts";
-import { deriveResponsesRequestStructure, ResponsesStreamObserver } from "./observation.ts";
+import {
+  deriveResponsesRequestStructure,
+  observeZstdResponsesRequestStructure,
+  ResponsesStreamObserver,
+} from "./observation.ts";
 
 type SupportedUpstreamPath = "chat/completions" | "responses";
 
@@ -51,10 +55,16 @@ async function forwardModelRequest(
 
   const observe = config.observationMode === "structural" && upstreamPath === "responses";
   const contentEncoding = observe ? requestContentEncoding(request) : undefined;
-  const requestStructure = observe && contentEncoding === "identity" ? deriveResponsesRequestStructure(body.bytes) : undefined;
-  const requestStructureUnavailableReason = observe && !requestStructure
-    ? contentEncoding === "identity" ? "not_json" : "content_encoded"
+  const identityRequestStructure = observe && contentEncoding === "identity"
+    ? deriveResponsesRequestStructure(body.bytes)
     : undefined;
+  const zstdObservation = observe && contentEncoding === "zstd"
+    ? observeZstdResponsesRequestStructure(body.bytes)
+    : undefined;
+  const requestStructure = identityRequestStructure ?? zstdObservation?.requestStructure;
+  const requestStructureUnavailableReason = !observe || requestStructure ? undefined
+    : contentEncoding === "identity" ? "not_json"
+    : zstdObservation?.unavailableReason ?? "content_encoded";
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), config.upstreamTimeoutMs);

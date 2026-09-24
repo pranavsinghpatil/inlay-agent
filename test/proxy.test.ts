@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { once } from "node:events";
+import { zstdCompressSync } from "node:zlib";
 import { createInlayServer } from "../src/app.ts";
 import { MetricsStore } from "../src/metrics.ts";
+import { MAX_ZSTD_OBSERVATION_BYTES } from "../src/observation.ts";
 
 async function listen(server: Server): Promise<number> {
   server.listen(0, "127.0.0.1");
@@ -235,12 +237,20 @@ test("records a client disconnect after response.completed as a transport cancel
   }
 });
 
-test("classifies a content-encoded Responses request without inspecting its body", async () => {
+test("observes a zstd Responses request while forwarding its compressed bytes unchanged", async () => {
+  const privateBody = JSON.stringify({
+    model: "test",
+    input: [
+      { type: "message", content: "ZSTD_PRIVATE_PROMPT" },
+      { type: "function_call_output", output: "ZSTD_PRIVATE_TOOL_OUTPUT" },
+    ],
+  });
+  const compressedBody = zstdCompressSync(Buffer.from(privateBody));
   const upstream = createServer(async (request, response) => {
     assert.equal(request.headers["content-encoding"], "zstd");
-    for await (const _chunk of request) {
-      // Forwarding is exercised; the proxy must not decode or retain this body.
-    }
+    const received: Buffer[] = [];
+    for await (const chunk of request) received.push(Buffer.from(chunk));
+    assert.deepEqual(Buffer.concat(received), compressedBody);
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
   });
@@ -260,13 +270,134 @@ test("classifies a content-encoded Responses request without inspecting its body
     const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
       method: "POST",
       headers: { "content-encoding": "zstd" },
-      body: "not-inspected-content",
+      body: new Uint8Array(compressedBody),
     });
     await response.text();
-    const metric = (metrics.snapshot() as { recent: Array<{ requestContentEncoding?: string; requestStructure?: unknown; requestStructureUnavailableReason?: string }> }).recent[0];
+    const metric = (metrics.snapshot() as { recent: Array<{
+      requestContentEncoding?: string;
+      requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number> };
+      requestStructureUnavailableReason?: string;
+    }> }).recent[0];
     assert.equal(metric.requestContentEncoding, "zstd");
+    assert.equal(metric.requestStructureUnavailableReason, undefined);
+    assert.equal(metric.requestStructure?.inputItemCount, 2);
+    assert.deepEqual(metric.requestStructure?.inputItemTypeCounts, { message: 1, function_call_output: 1 });
+    assert.doesNotMatch(JSON.stringify(metric), /ZSTD_PRIVATE_PROMPT|ZSTD_PRIVATE_TOOL_OUTPUT/);
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("records malformed zstd as unavailable while forwarding it unchanged", async () => {
+  const malformedBody = Buffer.from("not-a-zstd-frame");
+  const upstream = createServer(async (request, response) => {
+    const received: Buffer[] = [];
+    for await (const chunk of request) received.push(Buffer.from(chunk));
+    assert.deepEqual(Buffer.concat(received), malformedBody);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "structural",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-encoding": "zstd" },
+      body: new Uint8Array(malformedBody),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    const metric = (metrics.snapshot() as { recent: Array<{ requestStructure?: unknown; requestStructureUnavailableReason?: string }> }).recent[0];
     assert.equal(metric.requestStructure, undefined);
-    assert.equal(metric.requestStructureUnavailableReason, "content_encoded");
+    assert.equal(metric.requestStructureUnavailableReason, "zstd_decode_failed");
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("does not observe zstd when structural observation is disabled", async () => {
+  const malformedBody = Buffer.from("not-a-zstd-frame");
+  const upstream = createServer(async (request, response) => {
+    const received: Buffer[] = [];
+    for await (const chunk of request) received.push(Buffer.from(chunk));
+    assert.deepEqual(Buffer.concat(received), malformedBody);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "off",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-encoding": "zstd" },
+      body: new Uint8Array(malformedBody),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    const metric = (metrics.snapshot() as { recent: Array<{ requestContentEncoding?: string; requestStructure?: unknown; requestStructureUnavailableReason?: string }> }).recent[0];
+    assert.equal(metric.requestContentEncoding, undefined);
+    assert.equal(metric.requestStructure, undefined);
+    assert.equal(metric.requestStructureUnavailableReason, undefined);
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("bounds zstd observation output while preserving forwarding", async () => {
+  const compressedBody = zstdCompressSync(Buffer.alloc(MAX_ZSTD_OBSERVATION_BYTES + 1, 0x61));
+  const upstream = createServer(async (request, response) => {
+    const received: Buffer[] = [];
+    for await (const chunk of request) received.push(Buffer.from(chunk));
+    assert.deepEqual(Buffer.concat(received), compressedBody);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "structural",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-encoding": "zstd" },
+      body: new Uint8Array(compressedBody),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    const metric = (metrics.snapshot() as { recent: Array<{ requestStructure?: unknown; requestStructureUnavailableReason?: string }> }).recent[0];
+    assert.equal(metric.requestStructure, undefined);
+    assert.equal(metric.requestStructureUnavailableReason, "zstd_output_limit");
   } finally {
     await close(proxy);
     await close(upstream);

@@ -1,4 +1,4 @@
-import type { ProviderUsage, RequestStructure } from "./observation.ts";
+import type { ProviderUsage, RequestStructure, RequestStructureUnavailableReason } from "./observation.ts";
 
 export interface RequestMetric {
   requestId: string;
@@ -17,7 +17,7 @@ export interface RequestMetric {
   responseStatus?: number;
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";
   requestStructure?: RequestStructure;
-  requestStructureUnavailableReason?: "content_encoded" | "not_json";
+  requestStructureUnavailableReason?: RequestStructureUnavailableReason;
   usage?: ProviderUsage;
 }
 
