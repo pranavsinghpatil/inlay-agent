@@ -162,6 +162,7 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
         responseBytes?: number;
         completed?: boolean;
         cancelled?: boolean;
+        terminalEventObserved?: boolean;
         timeToUpstreamHeadersMs?: number;
         timeToFirstResponseBodyByteMs?: number;
         requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; topLevelFields: Array<{ name: string }> };
@@ -174,6 +175,7 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     assert.equal(snapshot.recent[0].responseBytes, Buffer.byteLength(firstEvent + completedEvent));
     assert.equal(snapshot.recent[0].completed, true);
     assert.equal(snapshot.recent[0].cancelled, false);
+    assert.equal(snapshot.recent[0].terminalEventObserved, true);
     assert.ok(snapshot.recent[0].timeToUpstreamHeadersMs !== undefined);
     assert.ok(snapshot.recent[0].timeToFirstResponseBodyByteMs !== undefined);
     assert.deepEqual(snapshot.recent[0].usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20, cachedInputTokens: 3 });
@@ -187,11 +189,11 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
   }
 });
 
-test("records a cancelled Responses stream without retaining its event body", async () => {
+test("records a client disconnect after response.completed as a transport cancellation", async () => {
   let interval: NodeJS.Timeout | undefined;
   const upstream = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/event-stream" });
-    response.write('event: response.output_text.delta\ndata: {"delta":"PRIVATE_STREAM_CONTENT"}\n\n');
+    response.write('event: response.completed\ndata: {"type":"response.completed","detail":"PRIVATE_STREAM_CONTENT"}\n\n');
     interval = setInterval(() => response.write(': keepalive\n\n'), 10);
     response.once("close", () => clearInterval(interval));
   });
@@ -218,14 +220,54 @@ test("records a cancelled Responses stream without retaining its event body", as
     await reader.cancel();
 
     await waitFor(() => (metrics.snapshot() as { totalRequests: number }).totalRequests === 1);
-    const metric = (metrics.snapshot() as { recent: Array<{ completed?: boolean; cancelled?: boolean; responseBytes?: number; errorCategory?: string }> }).recent[0];
+    const metric = (metrics.snapshot() as { recent: Array<{ completed?: boolean; cancelled?: boolean; terminalEventObserved?: boolean; cancelledAfterTerminalEvent?: boolean; responseBytes?: number; errorCategory?: string }> }).recent[0];
     assert.equal(metric.completed, false);
     assert.equal(metric.cancelled, true);
+    assert.equal(metric.terminalEventObserved, true);
+    assert.equal(metric.cancelledAfterTerminalEvent, true);
     assert.equal(metric.errorCategory, "client_disconnect");
     assert.ok((metric.responseBytes ?? 0) > 0);
     assert.doesNotMatch(JSON.stringify(metric), /PRIVATE_STREAM_CONTENT|PRIVATE_PROMPT/);
   } finally {
     clearInterval(interval);
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("classifies a content-encoded Responses request without inspecting its body", async () => {
+  const upstream = createServer(async (request, response) => {
+    assert.equal(request.headers["content-encoding"], "zstd");
+    for await (const _chunk of request) {
+      // Forwarding is exercised; the proxy must not decode or retain this body.
+    }
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "structural",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { "content-encoding": "zstd" },
+      body: "not-inspected-content",
+    });
+    await response.text();
+    const metric = (metrics.snapshot() as { recent: Array<{ requestContentEncoding?: string; requestStructure?: unknown; requestStructureUnavailableReason?: string }> }).recent[0];
+    assert.equal(metric.requestContentEncoding, "zstd");
+    assert.equal(metric.requestStructure, undefined);
+    assert.equal(metric.requestStructureUnavailableReason, "content_encoded");
+  } finally {
     await close(proxy);
     await close(upstream);
   }

@@ -8,12 +8,16 @@ export interface RequestMetric {
   timeToUpstreamHeadersMs?: number;
   timeToFirstResponseBodyByteMs?: number;
   requestBytes: number;
+  requestContentEncoding?: "identity" | "br" | "deflate" | "gzip" | "zstd" | "other";
   responseBytes?: number;
   completed?: boolean;
   cancelled?: boolean;
+  terminalEventObserved?: boolean;
+  cancelledAfterTerminalEvent?: boolean;
   responseStatus?: number;
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";
   requestStructure?: RequestStructure;
+  requestStructureUnavailableReason?: "content_encoded" | "not_json";
   usage?: ProviderUsage;
 }
 

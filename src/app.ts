@@ -12,6 +12,14 @@ function downstreamRoute(upstreamPath: SupportedUpstreamPath): "/v1/chat/complet
   return `/v1/${upstreamPath}`;
 }
 
+function requestContentEncoding(request: IncomingMessage): "identity" | "br" | "deflate" | "gzip" | "zstd" | "other" {
+  const value = request.headers["content-encoding"];
+  const encoding = (Array.isArray(value) ? value.join(",") : value ?? "identity").split(",")[0].trim().toLowerCase();
+  if (encoding === "" || encoding === "identity") return "identity";
+  if (encoding === "br" || encoding === "deflate" || encoding === "gzip" || encoding === "zstd") return encoding;
+  return "other";
+}
+
 async function forwardModelRequest(
   config: ProxyConfig,
   metrics: MetricsStore,
@@ -42,7 +50,11 @@ async function forwardModelRequest(
   }
 
   const observe = config.observationMode === "structural" && upstreamPath === "responses";
-  const requestStructure = observe ? deriveResponsesRequestStructure(body.bytes) : undefined;
+  const contentEncoding = observe ? requestContentEncoding(request) : undefined;
+  const requestStructure = observe && contentEncoding === "identity" ? deriveResponsesRequestStructure(body.bytes) : undefined;
+  const requestStructureUnavailableReason = observe && !requestStructure
+    ? contentEncoding === "identity" ? "not_json" : "content_encoded"
+    : undefined;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), config.upstreamTimeoutMs);
@@ -100,11 +112,18 @@ async function forwardModelRequest(
       timeToUpstreamHeadersMs,
       timeToFirstResponseBodyByteMs: stream?.timeToFirstResponseBodyByteMs,
       requestBytes: body.bytes.length,
+      requestContentEncoding: contentEncoding,
       responseBytes: stream?.responseBytes,
       responseStatus: upstream.status,
       requestStructure,
+      requestStructureUnavailableReason,
       usage: stream?.usage,
-      ...(observe ? { completed: true, cancelled: false } : {}),
+      ...(observe ? {
+        completed: true,
+        cancelled: false,
+        terminalEventObserved: stream?.terminalEventObserved,
+        cancelledAfterTerminalEvent: false,
+      } : {}),
     });
   } catch (error) {
     const isTimeout = abortController.signal.aborted && !clientDisconnected;
@@ -117,12 +136,19 @@ async function forwardModelRequest(
       timeToUpstreamHeadersMs,
       timeToFirstResponseBodyByteMs: stream?.timeToFirstResponseBodyByteMs,
       requestBytes: body.bytes.length,
+      requestContentEncoding: contentEncoding,
       responseBytes: stream?.responseBytes,
       responseStatus: upstreamStatus,
       errorCategory: clientDisconnected ? "client_disconnect" : isTimeout ? "upstream_timeout" : "upstream_unavailable",
       requestStructure,
+      requestStructureUnavailableReason,
       usage: stream?.usage,
-      ...(observe ? { completed: false, cancelled: clientDisconnected } : {}),
+      ...(observe ? {
+        completed: false,
+        cancelled: clientDisconnected,
+        terminalEventObserved: stream?.terminalEventObserved,
+        cancelledAfterTerminalEvent: clientDisconnected && Boolean(stream?.terminalEventObserved),
+      } : {}),
     });
     if (!response.headersSent) {
       sendJson(response, isTimeout ? 504 : 502, {

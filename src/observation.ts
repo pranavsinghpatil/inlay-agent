@@ -63,6 +63,7 @@ export interface ResponseStreamObservation {
   responseBytes: number;
   timeToFirstResponseBodyByteMs?: number;
   usage?: ProviderUsage;
+  terminalEventObserved: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -146,6 +147,7 @@ export class ResponsesStreamObserver {
   #responseBytes = 0;
   #timeToFirstResponseBodyByteMs: number | undefined;
   #usage: ProviderUsage | undefined;
+  #terminalEventObserved = false;
 
   observe(chunk: Buffer, elapsedMs: number): void {
     this.#responseBytes += chunk.length;
@@ -174,20 +176,26 @@ export class ResponsesStreamObserver {
       responseBytes: this.#responseBytes,
       timeToFirstResponseBodyByteMs: this.#timeToFirstResponseBodyByteMs,
       usage: this.#usage,
+      terminalEventObserved: this.#terminalEventObserved,
     };
   }
 
   #observeEvent(event: string): void {
     if (event.length > MAX_SSE_EVENT_CHARS) return;
-    const data = event
-      .split(/\r?\n/)
+    const lines = event.split(/\r?\n/);
+    if (lines.some((line) => line.startsWith("event:") && line.slice("event:".length).trim() === "response.completed")) {
+      this.#terminalEventObserved = true;
+    }
+    const data = lines
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice("data:".length).trimStart())
       .join("\n");
     if (data === "" || data.length > MAX_SSE_EVENT_CHARS) return;
 
     try {
-      const usage = extractUsage(JSON.parse(data));
+      const payload = JSON.parse(data);
+      if (isRecord(payload) && payload.type === "response.completed") this.#terminalEventObserved = true;
+      const usage = extractUsage(payload);
       if (usage) this.#usage = { ...this.#usage, ...usage };
     } catch {
       // Non-JSON SSE data and malformed provider events are ignored.
