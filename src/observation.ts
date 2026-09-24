@@ -1,6 +1,8 @@
 import { StringDecoder } from "node:string_decoder";
+import { zstdDecompressSync } from "node:zlib";
 
 const MAX_SSE_EVENT_CHARS = 64 * 1024;
+export const MAX_ZSTD_OBSERVATION_BYTES = 1024 * 1024;
 
 const RESPONSE_TOP_LEVEL_FIELDS = new Set([
   "background",
@@ -50,6 +52,17 @@ export interface RequestStructure {
   topLevelFields: TopLevelFieldMetric[];
   inputItemCount?: number;
   inputItemTypeCounts?: Record<string, number>;
+}
+
+export type RequestStructureUnavailableReason =
+  | "content_encoded"
+  | "not_json"
+  | "zstd_decode_failed"
+  | "zstd_output_limit";
+
+export interface RequestStructureObservation {
+  requestStructure?: RequestStructure;
+  unavailableReason?: RequestStructureUnavailableReason;
 }
 
 export interface ProviderUsage {
@@ -112,6 +125,21 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
   }
 
   return structure;
+}
+
+/**
+ * Decodes a zstd request only while deriving content-free structure.
+ * The decoded buffer is bounded and is not returned or retained.
+ */
+export function observeZstdResponsesRequestStructure(body: Buffer): RequestStructureObservation {
+  try {
+    const decoded = zstdDecompressSync(body, { maxOutputLength: MAX_ZSTD_OBSERVATION_BYTES });
+    const requestStructure = deriveResponsesRequestStructure(decoded);
+    return requestStructure ? { requestStructure } : { unavailableReason: "not_json" };
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    return { unavailableReason: code === "ERR_BUFFER_TOO_LARGE" ? "zstd_output_limit" : "zstd_decode_failed" };
+  }
 }
 
 function numeric(value: unknown): number | undefined {
