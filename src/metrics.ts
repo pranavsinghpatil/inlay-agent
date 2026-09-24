@@ -1,5 +1,6 @@
 export interface RequestMetric {
   requestId: string;
+  route: "/v1/chat/completions" | "/v1/responses";
   startedAt: string;
   durationMs: number;
   timeToFirstByteMs?: number;

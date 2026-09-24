@@ -5,7 +5,19 @@ import type { ProxyConfig } from "./config.ts";
 import { copyResponseHeaders, forwardHeaders, readBody, sendJson } from "./http.ts";
 import { MetricsStore } from "./metrics.ts";
 
-async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore, request: IncomingMessage, response: ServerResponse): Promise<void> {
+type SupportedUpstreamPath = "chat/completions" | "responses";
+
+function downstreamRoute(upstreamPath: SupportedUpstreamPath): "/v1/chat/completions" | "/v1/responses" {
+  return `/v1/${upstreamPath}`;
+}
+
+async function forwardModelRequest(
+  config: ProxyConfig,
+  metrics: MetricsStore,
+  request: IncomingMessage,
+  response: ServerResponse,
+  upstreamPath: SupportedUpstreamPath,
+): Promise<void> {
   if (!config.upstreamBaseUrl) {
     sendJson(response, 503, {
       error: {
@@ -23,19 +35,26 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
     body = await readBody(request, config.maxBodyBytes);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid request body.";
-    metrics.record({ requestId: "unavailable", startedAt, durationMs: performance.now() - started, requestBytes: 0, errorCategory: "invalid_request" });
+    metrics.record({ requestId: "unavailable", route: downstreamRoute(upstreamPath), startedAt, durationMs: performance.now() - started, requestBytes: 0, errorCategory: "invalid_request" });
     sendJson(response, 413, { error: { code: "inlay_request_too_large", message } });
     return;
   }
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), config.upstreamTimeoutMs);
-  const cancelUpstream = () => abortController.abort();
+  let clientDisconnected = false;
+  const cancelUpstream = () => {
+    if (!response.writableEnded) {
+      clientDisconnected = true;
+      abortController.abort();
+    }
+  };
   request.once("aborted", cancelUpstream);
   response.once("close", cancelUpstream);
 
+  let upstreamStatus: number | undefined;
   try {
-    const upstreamUrl = new URL("chat/completions", `${config.upstreamBaseUrl.href.replace(/\/$/, "")}/`);
+    const upstreamUrl = new URL(upstreamPath, `${config.upstreamBaseUrl.href.replace(/\/$/, "")}/`);
     const upstream = await fetch(upstreamUrl, {
       method: "POST",
       headers: forwardHeaders(request.headers, body.requestId),
@@ -43,6 +62,7 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
       signal: abortController.signal,
     });
     const timeToFirstByteMs = performance.now() - started;
+    upstreamStatus = upstream.status;
 
     copyResponseHeaders(upstream.headers, response);
     response.setHeader("x-inlay-request-id", body.requestId);
@@ -55,6 +75,7 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
     }
     metrics.record({
       requestId: body.requestId,
+      route: downstreamRoute(upstreamPath),
       startedAt,
       durationMs: performance.now() - started,
       timeToFirstByteMs,
@@ -62,8 +83,16 @@ async function forwardChatCompletion(config: ProxyConfig, metrics: MetricsStore,
       responseStatus: upstream.status,
     });
   } catch (error) {
-    const isTimeout = abortController.signal.aborted;
-    metrics.record({ requestId: body.requestId, startedAt, durationMs: performance.now() - started, requestBytes: body.bytes.length, errorCategory: isTimeout ? "upstream_timeout" : "upstream_unavailable" });
+    const isTimeout = abortController.signal.aborted && !clientDisconnected;
+    metrics.record({
+      requestId: body.requestId,
+      route: downstreamRoute(upstreamPath),
+      startedAt,
+      durationMs: performance.now() - started,
+      requestBytes: body.bytes.length,
+      responseStatus: upstreamStatus,
+      errorCategory: clientDisconnected ? "client_disconnect" : isTimeout ? "upstream_timeout" : "upstream_unavailable",
+    });
     if (!response.headersSent) {
       sendJson(response, isTimeout ? 504 : 502, {
         error: {
@@ -93,9 +122,13 @@ export function createInlayServer(config: ProxyConfig, metrics = new MetricsStor
       return;
     }
     if (request.method === "POST" && request.url === "/v1/chat/completions") {
-      await forwardChatCompletion(config, metrics, request, response);
+      await forwardModelRequest(config, metrics, request, response, "chat/completions");
       return;
     }
-    sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions." } });
+    if (request.method === "POST" && request.url === "/v1/responses") {
+      await forwardModelRequest(config, metrics, request, response, "responses");
+      return;
+    }
+    sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions, POST /v1/responses." } });
   });
 }

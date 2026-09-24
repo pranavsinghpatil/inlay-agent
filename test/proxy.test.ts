@@ -76,11 +76,54 @@ test("forwards an OpenAI-compatible streaming response without transforming it",
     }
     assert.equal(new TextDecoder().decode(Buffer.concat(remaining)), 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"}"}}]}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}\n\ndata: [DONE]\n\n');
 
-    const snapshot = metrics.snapshot() as { totalRequests: number; recent: Array<{ responseStatus: number; timeToFirstByteMs: number; requestBytes: number }> };
+    const snapshot = metrics.snapshot() as { totalRequests: number; recent: Array<{ route: string; responseStatus: number; timeToFirstByteMs: number; requestBytes: number }> };
     assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.recent[0].route, "/v1/chat/completions");
     assert.equal(snapshot.recent[0].responseStatus, 200);
     assert.ok(snapshot.recent[0].timeToFirstByteMs >= 0);
     assert.ok(snapshot.recent[0].requestBytes > 0);
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("forwards a Codex Responses SSE request without interpreting it", async () => {
+  const upstream = createServer(async (request, response) => {
+    assert.equal(request.url, "/backend-api/codex/responses");
+    assert.equal(request.headers.authorization, "Bearer subscription-token");
+    const received: Buffer[] = [];
+    for await (const chunk of request) received.push(Buffer.from(chunk));
+    assert.equal(Buffer.concat(received).toString("utf8"), '{"model":"test","stream":true,"input":"Reply exactly INLAY_ROUTE_OK"}');
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write('event: response.output_text.delta\ndata: {"delta":"INLAY_ROUTE_OK"}\n\n');
+    response.end('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: { authorization: "Bearer subscription-token", "content-type": "application/json" },
+      body: '{"model":"test","stream":true,"input":"Reply exactly INLAY_ROUTE_OK"}',
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/event-stream");
+    assert.equal(await response.text(), 'event: response.output_text.delta\ndata: {"delta":"INLAY_ROUTE_OK"}\n\nevent: response.completed\ndata: {"type":"response.completed"}\n\n');
+
+    const snapshot = metrics.snapshot() as { totalRequests: number; recent: Array<{ route: string; responseStatus: number }> };
+    assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.recent[0].route, "/v1/responses");
+    assert.equal(snapshot.recent[0].responseStatus, 200);
   } finally {
     await close(proxy);
     await close(upstream);
