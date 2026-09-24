@@ -1,9 +1,10 @@
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { ProxyConfig } from "./config.ts";
 import { copyResponseHeaders, forwardHeaders, readBody, sendJson } from "./http.ts";
 import { MetricsStore } from "./metrics.ts";
+import { deriveResponsesRequestStructure, ResponsesStreamObserver } from "./observation.ts";
 
 type SupportedUpstreamPath = "chat/completions" | "responses";
 
@@ -40,6 +41,9 @@ async function forwardModelRequest(
     return;
   }
 
+  const observe = config.observationMode === "structural" && upstreamPath === "responses";
+  const requestStructure = observe ? deriveResponsesRequestStructure(body.bytes) : undefined;
+
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), config.upstreamTimeoutMs);
   let clientDisconnected = false;
@@ -53,6 +57,8 @@ async function forwardModelRequest(
   response.once("close", cancelUpstream);
 
   let upstreamStatus: number | undefined;
+  let timeToUpstreamHeadersMs: number | undefined;
+  const responseObserver = observe ? new ResponsesStreamObserver() : undefined;
   try {
     const upstreamUrl = new URL(upstreamPath, `${config.upstreamBaseUrl.href.replace(/\/$/, "")}/`);
     const upstream = await fetch(upstreamUrl, {
@@ -61,7 +67,7 @@ async function forwardModelRequest(
       body: new Uint8Array(body.bytes),
       signal: abortController.signal,
     });
-    const timeToFirstByteMs = performance.now() - started;
+    timeToUpstreamHeadersMs = performance.now() - started;
     upstreamStatus = upstream.status;
 
     copyResponseHeaders(upstream.headers, response);
@@ -69,29 +75,54 @@ async function forwardModelRequest(
     response.writeHead(upstream.status, upstream.statusText);
 
     if (upstream.body) {
-      await pipeline(Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]), response);
+      const source = Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]);
+      if (responseObserver) {
+        const observer = new Transform({
+          transform(chunk, _encoding, callback) {
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            responseObserver.observe(bytes, performance.now() - started);
+            callback(null, chunk);
+          },
+        });
+        await pipeline(source, observer, response);
+      } else {
+        await pipeline(source, response);
+      }
     } else {
       response.end();
     }
+    const stream = responseObserver?.snapshot();
     metrics.record({
       requestId: body.requestId,
       route: downstreamRoute(upstreamPath),
       startedAt,
       durationMs: performance.now() - started,
-      timeToFirstByteMs,
+      timeToUpstreamHeadersMs,
+      timeToFirstResponseBodyByteMs: stream?.timeToFirstResponseBodyByteMs,
       requestBytes: body.bytes.length,
+      responseBytes: stream?.responseBytes,
       responseStatus: upstream.status,
+      requestStructure,
+      usage: stream?.usage,
+      ...(observe ? { completed: true, cancelled: false } : {}),
     });
   } catch (error) {
     const isTimeout = abortController.signal.aborted && !clientDisconnected;
+    const stream = responseObserver?.snapshot();
     metrics.record({
       requestId: body.requestId,
       route: downstreamRoute(upstreamPath),
       startedAt,
       durationMs: performance.now() - started,
+      timeToUpstreamHeadersMs,
+      timeToFirstResponseBodyByteMs: stream?.timeToFirstResponseBodyByteMs,
       requestBytes: body.bytes.length,
+      responseBytes: stream?.responseBytes,
       responseStatus: upstreamStatus,
       errorCategory: clientDisconnected ? "client_disconnect" : isTimeout ? "upstream_timeout" : "upstream_unavailable",
+      requestStructure,
+      usage: stream?.usage,
+      ...(observe ? { completed: false, cancelled: clientDisconnected } : {}),
     });
     if (!response.headersSent) {
       sendJson(response, isTimeout ? 504 : 502, {
