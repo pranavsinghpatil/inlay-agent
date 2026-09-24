@@ -4,6 +4,7 @@ export interface ProxyConfig {
   upstreamBaseUrl?: URL;
   maxBodyBytes: number;
   upstreamTimeoutMs: number;
+  observationMode: "off" | "structural";
 }
 
 function positiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -13,6 +14,14 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
     throw new Error(`${name} must be a positive integer.`);
   }
   return parsed;
+}
+
+function observationMode(value: string | undefined): "off" | "structural" {
+  const mode = value ?? "off";
+  if (mode !== "off" && mode !== "structural") {
+    throw new Error("INLAY_OBSERVATION must be 'off' or 'structural'.");
+  }
+  return mode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
@@ -36,6 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     upstreamBaseUrl,
     maxBodyBytes: positiveInteger(env.INLAY_MAX_BODY_BYTES, 10 * 1024 * 1024, "INLAY_MAX_BODY_BYTES"),
     upstreamTimeoutMs: positiveInteger(env.INLAY_UPSTREAM_TIMEOUT_MS, 120_000, "INLAY_UPSTREAM_TIMEOUT_MS"),
+    observationMode: observationMode(env.INLAY_OBSERVATION),
   };
 }
 

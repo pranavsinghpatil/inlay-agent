@@ -1,12 +1,24 @@
+import type { ProviderUsage, RequestStructure } from "./observation.ts";
+
 export interface RequestMetric {
   requestId: string;
   route: "/v1/chat/completions" | "/v1/responses";
   startedAt: string;
   durationMs: number;
-  timeToFirstByteMs?: number;
+  timeToUpstreamHeadersMs?: number;
+  timeToFirstResponseBodyByteMs?: number;
   requestBytes: number;
+  requestContentEncoding?: "identity" | "br" | "deflate" | "gzip" | "zstd" | "other";
+  responseBytes?: number;
+  completed?: boolean;
+  cancelled?: boolean;
+  terminalEventObserved?: boolean;
+  cancelledAfterTerminalEvent?: boolean;
   responseStatus?: number;
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";
+  requestStructure?: RequestStructure;
+  requestStructureUnavailableReason?: "content_encoded" | "not_json";
+  usage?: ProviderUsage;
 }
 
 export class MetricsStore {

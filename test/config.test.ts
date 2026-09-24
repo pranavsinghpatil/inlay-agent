@@ -7,6 +7,12 @@ test("defaults to a loopback transparent proxy", () => {
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 8787);
   assert.equal(config.upstreamBaseUrl, undefined);
+  assert.equal(config.observationMode, "off");
+});
+
+test("enables structural observation only when explicitly requested", () => {
+  assert.equal(loadConfig({ INLAY_OBSERVATION: "structural" }).observationMode, "structural");
+  assert.throws(() => loadConfig({ INLAY_OBSERVATION: "enabled" }), /INLAY_OBSERVATION/);
 });
 
 test("rejects non-loopback binding", () => {
