@@ -13,6 +13,7 @@ export interface RequestMetric {
   completed?: boolean;
   cancelled?: boolean;
   terminalEventObserved?: boolean;
+  responseObservationIncomplete?: boolean;
   cancelledAfterTerminalEvent?: boolean;
   responseStatus?: number;
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";

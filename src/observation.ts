@@ -77,14 +77,26 @@ export interface ResponseStreamObservation {
   timeToFirstResponseBodyByteMs?: number;
   usage?: ProviderUsage;
   terminalEventObserved: boolean;
+  responseObservationIncomplete: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!isRecord(value)) return value;
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+  );
+}
+
 function canonicalJsonBytes(value: unknown): number {
-  const encoded = JSON.stringify(value);
+  const encoded = JSON.stringify(canonicalizeJson(value));
   return encoded === undefined ? 0 : Buffer.byteLength(encoded, "utf8");
 }
 
@@ -176,6 +188,7 @@ export class ResponsesStreamObserver {
   #timeToFirstResponseBodyByteMs: number | undefined;
   #usage: ProviderUsage | undefined;
   #terminalEventObserved = false;
+  #responseObservationIncomplete = false;
 
   observe(chunk: Buffer, elapsedMs: number): void {
     this.#responseBytes += chunk.length;
@@ -185,6 +198,7 @@ export class ResponsesStreamObserver {
 
     this.#pending += this.#decoder.write(chunk);
     if (this.#pending.length > MAX_SSE_EVENT_CHARS) {
+      this.#responseObservationIncomplete = true;
       this.#pending = "";
       return;
     }
@@ -205,7 +219,17 @@ export class ResponsesStreamObserver {
       timeToFirstResponseBodyByteMs: this.#timeToFirstResponseBodyByteMs,
       usage: this.#usage,
       terminalEventObserved: this.#terminalEventObserved,
+      responseObservationIncomplete: this.#responseObservationIncomplete,
     };
+  }
+
+  /** Marks a final unterminated SSE frame as unavailable without affecting forwarded bytes. */
+  finish(): void {
+    this.#pending += this.#decoder.end();
+    if (this.#pending !== "") {
+      this.#responseObservationIncomplete = true;
+      this.#pending = "";
+    }
   }
 
   #observeEvent(event: string): void {
