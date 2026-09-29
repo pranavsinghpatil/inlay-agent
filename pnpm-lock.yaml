@@ -9,7 +9,7 @@ importers:
   .:
     devDependencies:
       '@earendil-works/pi-coding-agent':
-        specifier: ^0.86.0
+        specifier: 0.86.0
         version: 0.86.0(ws@8.21.3)
       '@types/node':
         specifier: 22.19.19

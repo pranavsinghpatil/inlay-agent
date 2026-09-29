@@ -1,4 +1,6 @@
-# Step 3: transparent proxy baseline
+# Step 3: transparent proxy baseline — legacy Pi reference
+
+> This API-key custom-provider procedure is not the Inlay product path and is not a requirement for use. The current live baseline is Codex HTTP Responses; use the [Codex record](../research/c2-codex-clamp-baseline.md) and [experiment-record template](../research/experiment-record-template.md) instead. A future Pi test must use Pi's own existing-auth flow.
 
 Goal: establish that one pinned OpenAI Chat Completions provider/model has the same useful Pi behavior both directly and through Inlay. This is not an optimization test.
 
