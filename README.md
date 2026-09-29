@@ -29,6 +29,8 @@ Structural observation is explicitly opt-in and records no scalar request or res
 
 The SSE observer discards event content after extracting approved numeric usage and lifecycle fields. If an oversized or unterminated frame cannot be inspected safely, `responseObservationIncomplete=true` prevents absence of a terminal event or usage field from being treated as evidence.
 
+When `INLAY_OBSERVATION=structural`, Responses input also includes totals of canonical structural bytes by an approved item type. Unknown type strings are always grouped as `other`; neither a type value outside the approved set nor any item scalar is retained. These totals support an ObservationPack **eligibility** study only. They do not identify repeated content, semantic redundancy, token savings, or a safe transformation.
+
 ## Roadmap
 
 1. Freeze and reproduce the transparent Codex baseline.

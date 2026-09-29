@@ -39,6 +39,26 @@ test("canonical structural bytes are independent of object key insertion order",
   assert.equal(leftInput.canonicalJsonBytes, rightInput.canonicalJsonBytes);
 });
 
+test("aggregates canonical structural bytes by approved input item type", () => {
+  const item = { type: "message" };
+  const structure = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({ input: [item, item] })));
+
+  assert.deepEqual(structure?.inputItemTypeCounts, { message: 2 });
+  assert.deepEqual(structure?.inputItemTypeCanonicalJsonBytes, {
+    message: Buffer.byteLength(JSON.stringify(item), "utf8") * 2,
+  });
+});
+
+test("groups unknown input item types as other without retaining their type string", () => {
+  const structure = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({
+    input: [{ type: "PRIVATE_UNRECOGNIZED_TYPE", content: "PRIVATE_CONTENT" }],
+  })));
+
+  assert.deepEqual(structure?.inputItemTypeCounts, { other: 1 });
+  assert.ok((structure?.inputItemTypeCanonicalJsonBytes?.other ?? 0) > 0);
+  assert.doesNotMatch(JSON.stringify(structure), /PRIVATE_UNRECOGNIZED_TYPE|PRIVATE_CONTENT/);
+});
+
 test("forwards an OpenAI-compatible streaming response without transforming it", async () => {
   const upstream = createServer(async (request, response) => {
     assert.equal(request.url, "/v1/chat/completions");
@@ -178,7 +198,7 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
         terminalEventObserved?: boolean;
         timeToUpstreamHeadersMs?: number;
         timeToFirstResponseBodyByteMs?: number;
-        requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; topLevelFields: Array<{ name: string }> };
+        requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; inputItemTypeCanonicalJsonBytes?: Record<string, number>; topLevelFields: Array<{ name: string }> };
         usage?: Record<string, number>;
       }>;
     };
@@ -194,6 +214,8 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     assert.deepEqual(snapshot.recent[0].usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20, cachedInputTokens: 3 });
     assert.equal(snapshot.recent[0].requestStructure?.inputItemCount, 2);
     assert.deepEqual(snapshot.recent[0].requestStructure?.inputItemTypeCounts, { message: 1, function_call_output: 1 });
+    assert.ok((snapshot.recent[0].requestStructure?.inputItemTypeCanonicalJsonBytes?.message ?? 0) > 0);
+    assert.ok((snapshot.recent[0].requestStructure?.inputItemTypeCanonicalJsonBytes?.function_call_output ?? 0) > 0);
     assert.deepEqual(snapshot.recent[0].requestStructure?.topLevelFields.map((field) => field.name), ["client_metadata", "input", "model", "stream"]);
     assert.doesNotMatch(JSON.stringify(snapshot.recent[0]), /PRIVATE_PROMPT|PRIVATE_TOOL_OUTPUT|private\\project|subscription-token|call-private/);
   } finally {
@@ -345,13 +367,15 @@ test("observes a zstd Responses request while forwarding its compressed bytes un
     await response.text();
     const metric = (metrics.snapshot() as { recent: Array<{
       requestContentEncoding?: string;
-      requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number> };
+      requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; inputItemTypeCanonicalJsonBytes?: Record<string, number> };
       requestStructureUnavailableReason?: string;
     }> }).recent[0];
     assert.equal(metric.requestContentEncoding, "zstd");
     assert.equal(metric.requestStructureUnavailableReason, undefined);
     assert.equal(metric.requestStructure?.inputItemCount, 2);
     assert.deepEqual(metric.requestStructure?.inputItemTypeCounts, { message: 1, function_call_output: 1 });
+    assert.ok((metric.requestStructure?.inputItemTypeCanonicalJsonBytes?.message ?? 0) > 0);
+    assert.ok((metric.requestStructure?.inputItemTypeCanonicalJsonBytes?.function_call_output ?? 0) > 0);
     assert.doesNotMatch(JSON.stringify(metric), /ZSTD_PRIVATE_PROMPT|ZSTD_PRIVATE_TOOL_OUTPUT/);
   } finally {
     await close(proxy);
