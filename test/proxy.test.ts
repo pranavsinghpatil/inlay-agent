@@ -28,6 +28,29 @@ async function waitFor(condition: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
+test("issues process-local observation sequences and retains only the bounded metric window", () => {
+  const metrics = new MetricsStore();
+  assert.deepEqual([
+    metrics.nextObservationSequence(),
+    metrics.nextObservationSequence(),
+    metrics.nextObservationSequence(),
+  ], [1, 2, 3]);
+
+  for (let index = 0; index < 101; index += 1) {
+    metrics.record({
+      requestId: "opaque-request-id",
+      route: "/v1/responses",
+      startedAt: "",
+      durationMs: 0,
+      requestBytes: 0,
+    });
+  }
+
+  const snapshot = metrics.snapshot() as { totalRequests: number; recent: unknown[] };
+  assert.equal(snapshot.totalRequests, 101);
+  assert.equal(snapshot.recent.length, 100);
+});
+
 test("canonical structural bytes are independent of object key insertion order", () => {
   const left = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({ input: [{ type: "message", alpha: "a", beta: "b" }] })));
   const right = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({ input: [{ beta: "b", type: "message", alpha: "a" }] })));
@@ -37,6 +60,7 @@ test("canonical structural bytes are independent of object key insertion order",
   assert.ok(leftInput);
   assert.ok(rightInput);
   assert.equal(leftInput.canonicalJsonBytes, rightInput.canonicalJsonBytes);
+  assert.equal(left?.canonicalStructuralBytesTotal, right?.canonicalStructuralBytesTotal);
 });
 
 test("aggregates canonical structural bytes by approved input item type", () => {
@@ -190,6 +214,7 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     const snapshot = metrics.snapshot() as {
       totalRequests: number;
       recent: Array<{
+        observationSequence?: number;
         route: string;
         responseStatus: number;
         responseBytes?: number;
@@ -198,11 +223,12 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
         terminalEventObserved?: boolean;
         timeToUpstreamHeadersMs?: number;
         timeToFirstResponseBodyByteMs?: number;
-        requestStructure?: { inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; inputItemTypeCanonicalJsonBytes?: Record<string, number>; topLevelFields: Array<{ name: string }> };
+        requestStructure?: { canonicalStructuralBytesTotal?: number; inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; inputItemTypeCanonicalJsonBytes?: Record<string, number>; topLevelFields: Array<{ name: string }> };
         usage?: Record<string, number>;
       }>;
     };
     assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.recent[0].observationSequence, 1);
     assert.equal(snapshot.recent[0].route, "/v1/responses");
     assert.equal(snapshot.recent[0].responseStatus, 200);
     assert.equal(snapshot.recent[0].responseBytes, Buffer.byteLength(firstEvent + completedEvent));
@@ -213,6 +239,7 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     assert.ok(snapshot.recent[0].timeToFirstResponseBodyByteMs !== undefined);
     assert.deepEqual(snapshot.recent[0].usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20, cachedInputTokens: 3 });
     assert.equal(snapshot.recent[0].requestStructure?.inputItemCount, 2);
+    assert.ok((snapshot.recent[0].requestStructure?.canonicalStructuralBytesTotal ?? 0) > 0);
     assert.deepEqual(snapshot.recent[0].requestStructure?.inputItemTypeCounts, { message: 1, function_call_output: 1 });
     assert.ok((snapshot.recent[0].requestStructure?.inputItemTypeCanonicalJsonBytes?.message ?? 0) > 0);
     assert.ok((snapshot.recent[0].requestStructure?.inputItemTypeCanonicalJsonBytes?.function_call_output ?? 0) > 0);

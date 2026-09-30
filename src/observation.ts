@@ -48,6 +48,8 @@ export interface TopLevelFieldMetric {
 }
 
 export interface RequestStructure {
+  /** UTF-8 bytes of the complete transient request after canonical JSON serialization. */
+  canonicalStructuralBytesTotal: number;
   topLevelFieldCount: number;
   topLevelFields: TopLevelFieldMetric[];
   inputItemCount?: number;
@@ -121,6 +123,7 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
   }
 
   const structure: RequestStructure = {
+    canonicalStructuralBytesTotal: canonicalJsonBytes(payload),
     topLevelFieldCount: Object.keys(payload).length,
     topLevelFields: [...fields.values()].sort((left, right) => left.name.localeCompare(right.name)),
   };

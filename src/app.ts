@@ -54,6 +54,7 @@ async function forwardModelRequest(
   }
 
   const observe = config.observationMode === "structural" && upstreamPath === "responses";
+  const observationSequence = observe ? metrics.nextObservationSequence() : undefined;
   const contentEncoding = observe ? requestContentEncoding(request) : undefined;
   const identityRequestStructure = observe && contentEncoding === "identity"
     ? deriveResponsesRequestStructure(body.bytes)
@@ -116,6 +117,7 @@ async function forwardModelRequest(
     responseObserver?.finish();
     const stream = responseObserver?.snapshot();
     metrics.record({
+      observationSequence,
       requestId: body.requestId,
       route: downstreamRoute(upstreamPath),
       startedAt,
@@ -141,6 +143,7 @@ async function forwardModelRequest(
     const isTimeout = abortController.signal.aborted && !clientDisconnected;
     const stream = responseObserver?.snapshot();
     metrics.record({
+      observationSequence,
       requestId: body.requestId,
       route: downstreamRoute(upstreamPath),
       startedAt,
