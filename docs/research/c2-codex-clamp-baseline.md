@@ -30,3 +30,20 @@ Observed compressed request-byte totals were 162,662, 161,470, and 160,761. All 
 This establishes transparent placement for this Codex HTTP profile and this task contract. It does **not** establish token reduction, cost reduction, latency improvement, semantic improvement, or a safe transformation candidate. Request bytes are not token counts, and cached-input reporting does not show that pruning would save cost.
 
 The clamp task is retained as a development/regression smoke fixture, not as independent optimization evidence. The rule-precedence fixture is quarantined pending a new one-defect immutable baseline.
+
+## Fresh validation pair — 2026-09-28 IST
+
+The same immutable fixture baseline and task contract were rerun in fresh detached worktrees with Codex CLI `0.153.4`, model `gpt-5.6-terra`, existing ChatGPT authentication, and process-only `windows.sandbox="unelevated"` configuration.
+
+| Arm | Result | Changed-file scope | Request and usage observations |
+| --- | --- | --- | --- |
+| Direct control | `C2_VERIFY_OK` | `src/clamp.mjs` only | Inlay metrics intentionally unavailable. |
+| Observed treatment | `C2_VERIFY_OK` | `src/clamp.mjs` only | 3 HTTP 200 Responses requests; 98,418 compressed request bytes; input tokens 23,949 -> 24,303 -> 24,459; cached input tokens 6,912 -> 23,296 -> 23,296; output tokens 150 -> 120 -> 157. |
+
+Observed first-body timings were 1,492 ms, 918 ms, and 1,117 ms. All three exchanges had terminal SSE events; one completed normally and two were client disconnects after a terminal event. No request or response payload was transformed.
+
+### Cancellation probe
+
+A separate read-only Codex probe through Inlay produced an HTTP 200 response with a first body byte at 945 ms, then a client disconnect before a terminal event. Inlay classified it as `cancelled=true`, `terminalEventObserved=false`, and `errorCategory=client_disconnect`; it remained healthy and did not fabricate a completion. This is transport cancellation evidence from a noninteractive process interruption, not a substitute for a future human interactive cancellation-usability check.
+
+Live provider non-2xx behavior remains unobserved. The repository's synthetic non-2xx test is the current error-forwarding contract.

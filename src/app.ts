@@ -113,6 +113,7 @@ async function forwardModelRequest(
     } else {
       response.end();
     }
+    responseObserver?.finish();
     const stream = responseObserver?.snapshot();
     metrics.record({
       requestId: body.requestId,
@@ -132,6 +133,7 @@ async function forwardModelRequest(
         completed: true,
         cancelled: false,
         terminalEventObserved: stream?.terminalEventObserved,
+        responseObservationIncomplete: stream?.responseObservationIncomplete,
         cancelledAfterTerminalEvent: false,
       } : {}),
     });
@@ -157,6 +159,7 @@ async function forwardModelRequest(
         completed: false,
         cancelled: clientDisconnected,
         terminalEventObserved: stream?.terminalEventObserved,
+        responseObservationIncomplete: stream?.responseObservationIncomplete,
         cancelledAfterTerminalEvent: clientDisconnected && Boolean(stream?.terminalEventObserved),
       } : {}),
     });

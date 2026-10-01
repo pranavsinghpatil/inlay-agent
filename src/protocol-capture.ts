@@ -1,43 +1,105 @@
 import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-type Shape = null | boolean | number | string | Shape[] | { [key: string]: Shape };
-
-const SENSITIVE_KEY = /(?:api[_-]?key|authorization|content|prompt|secret|text|token)/i;
-const MAX_DEPTH = 5;
+const MAX_COLLECTION_ITEMS = 10;
 export const MAX_PROTOCOL_CAPTURE_BYTES = 256 * 1024;
 
 const captureQueues = new Map<string, Promise<void>>();
 
-/** Returns field structure and scalar types without retaining scalar values. */
-export function structuralShape(value: unknown, depth = 0): Shape {
-  if (value === null) return null;
-  if (depth >= MAX_DEPTH) return "max-depth";
+type StructuralKind = "null" | "array" | "boolean" | "number" | "object" | "string" | "undefined" | "other";
+
+export interface StructuralShape {
+  kind: StructuralKind;
+  itemCount?: number;
+  fieldCount?: number;
+  truncated?: boolean;
+}
+
+/** Returns only fixed structural categories and bounded collection counts. */
+export function structuralShape(value: unknown): StructuralShape {
+  if (value === null) return { kind: "null" };
   if (Array.isArray(value)) {
-    return value.slice(0, 10).map((entry) => structuralShape(entry, depth + 1));
+    return {
+      kind: "array",
+      itemCount: Math.min(value.length, MAX_COLLECTION_ITEMS),
+      ...(value.length > MAX_COLLECTION_ITEMS ? { truncated: true } : {}),
+    };
   }
   switch (typeof value) {
-    case "string":
-      return "string";
-    case "number":
-      return "number";
-    case "boolean":
-      return "boolean";
+    case "string": return { kind: "string" };
+    case "number": return { kind: "number" };
+    case "boolean": return { kind: "boolean" };
+    case "undefined": return { kind: "undefined" };
     case "object": {
-      const record: Record<string, Shape> = {};
-      for (const [key, entry] of Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))) {
-        record[key] = SENSITIVE_KEY.test(key) ? "redacted" : structuralShape(entry, depth + 1);
-      }
-      return record;
+      const fieldCount = Object.keys(value as Record<string, unknown>).length;
+      return {
+        kind: "object",
+        fieldCount: Math.min(fieldCount, MAX_COLLECTION_ITEMS),
+        ...(fieldCount > MAX_COLLECTION_ITEMS ? { truncated: true } : {}),
+      };
     }
     default:
-      return typeof value;
+      return { kind: "other" };
   }
 }
 
 export interface ProtocolCaptureEvent {
   event: "session_start" | "provider_request" | "provider_response" | "tool_result";
   details: Record<string, unknown>;
+}
+
+interface ToolContentSummary {
+  partCount: number;
+  textPartCount: number;
+  otherPartCount: number;
+  textBytes: number;
+}
+
+function toolContentSummary(value: unknown): ToolContentSummary {
+  if (!Array.isArray(value)) return { partCount: 0, textPartCount: 0, otherPartCount: 0, textBytes: 0 };
+
+  let textPartCount = 0;
+  let otherPartCount = 0;
+  let textBytes = 0;
+  for (const part of value) {
+    const record = typeof part === "object" && part !== null ? part as Record<string, unknown> : undefined;
+    if (record?.type === "text" && typeof record.text === "string") {
+      textPartCount += 1;
+      textBytes += Buffer.byteLength(record.text, "utf8");
+    } else {
+      otherPartCount += 1;
+    }
+  }
+  return { partCount: value.length, textPartCount, otherPartCount, textBytes };
+}
+
+function statusCategory(value: unknown): "success" | "redirect" | "client_error" | "server_error" | "other" {
+  if (typeof value !== "number" || !Number.isInteger(value)) return "other";
+  if (value >= 200 && value < 300) return "success";
+  if (value >= 300 && value < 400) return "redirect";
+  if (value >= 400 && value < 500) return "client_error";
+  if (value >= 500 && value < 600) return "server_error";
+  return "other";
+}
+
+/** Converts every extension event into a fixed, scalar-free capture schema. */
+function sanitizeCaptureEvent(event: ProtocolCaptureEvent): object {
+  switch (event.event) {
+    case "session_start":
+      return { event: event.event, details: {} };
+    case "provider_request":
+      return { event: event.event, details: { payload: structuralShape(event.details.payload) } };
+    case "provider_response":
+      return { event: event.event, details: { status: statusCategory(event.details.status) } };
+    case "tool_result":
+      return {
+        event: event.event,
+        details: {
+          content: toolContentSummary(event.details.content),
+          input: structuralShape(event.details.input),
+        },
+      };
+  }
 }
 
 function captureFile(projectDirectory: string): { root: string; file: string } {
@@ -69,13 +131,10 @@ export async function resetProtocolCapture(projectDirectory: string): Promise<vo
   });
 }
 
-/**
- * Appends only structural metadata to the Pi diagnostic spool.
- * Raw values are converted to their structural shape before writing.
- */
+/** Appends only event-specific fixed-category metadata to the Pi diagnostic spool. */
 export async function appendProtocolCapture(projectDirectory: string, event: ProtocolCaptureEvent): Promise<"recorded" | "truncated"> {
   const { root, file } = captureFile(projectDirectory);
-  const stored = JSON.stringify({ event: event.event, details: structuralShape(event.details) }) + "\n";
+  const stored = JSON.stringify(sanitizeCaptureEvent(event)) + "\n";
   const storedBytes = Buffer.byteLength(stored, "utf8");
 
   return serializeCapture(file, async () => {

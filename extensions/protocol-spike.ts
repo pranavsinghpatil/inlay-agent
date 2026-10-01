@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { appendProtocolCapture, resetProtocolCapture, structuralShape } from "../src/protocol-capture.ts";
+import { appendProtocolCapture, resetProtocolCapture } from "../src/protocol-capture.ts";
 
 /**
  * A non-transforming extension used to validate the exact installed Pi/provider
@@ -31,19 +31,19 @@ export default function inlayProtocolSpike(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    void record(ctx.cwd, "provider_request", { payload: structuralShape(event.payload) }, ctx);
+    void record(ctx.cwd, "provider_request", { payload: event.payload }, ctx);
   });
 
   pi.on("after_provider_response", (event, ctx) => {
     void record(ctx.cwd, "provider_response", {
-      statusClass: `${Math.floor(event.status / 100)}xx`,
+      status: event.status,
     }, ctx);
   });
 
   pi.on("tool_result", (event, ctx) => {
     void record(ctx.cwd, "tool_result", {
-      content: event.content.map((part) => ({ type: part.type, bytes: part.type === "text" ? Buffer.byteLength(part.text, "utf8") : undefined })),
-      input: structuralShape(event.input),
+      content: event.content,
+      input: event.input,
     }, ctx);
   });
 }

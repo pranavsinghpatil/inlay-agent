@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { zstdCompressSync } from "node:zlib";
 import { createInlayServer } from "../src/app.ts";
 import { MetricsStore } from "../src/metrics.ts";
-import { MAX_ZSTD_OBSERVATION_BYTES } from "../src/observation.ts";
+import { deriveResponsesRequestStructure, MAX_ZSTD_OBSERVATION_BYTES } from "../src/observation.ts";
 
 async function listen(server: Server): Promise<number> {
   server.listen(0, "127.0.0.1");
@@ -27,6 +27,17 @@ async function waitFor(condition: () => boolean, timeoutMs = 1_000): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+test("canonical structural bytes are independent of object key insertion order", () => {
+  const left = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({ input: [{ type: "message", alpha: "a", beta: "b" }] })));
+  const right = deriveResponsesRequestStructure(Buffer.from(JSON.stringify({ input: [{ beta: "b", type: "message", alpha: "a" }] })));
+  const leftInput = left?.topLevelFields.find((field) => field.name === "input");
+  const rightInput = right?.topLevelFields.find((field) => field.name === "input");
+
+  assert.ok(leftInput);
+  assert.ok(rightInput);
+  assert.equal(leftInput.canonicalJsonBytes, rightInput.canonicalJsonBytes);
+});
 
 test("forwards an OpenAI-compatible streaming response without transforming it", async () => {
   const upstream = createServer(async (request, response) => {
@@ -232,6 +243,65 @@ test("records a client disconnect after response.completed as a transport cancel
     assert.doesNotMatch(JSON.stringify(metric), /PRIVATE_STREAM_CONTENT|PRIVATE_PROMPT/);
   } finally {
     clearInterval(interval);
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("marks an oversized SSE event as observation-incomplete while forwarding it unchanged", async () => {
+  const event = `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: "x".repeat(64 * 1024) })}\n\n`;
+  const upstream = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(event);
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "structural",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, { method: "POST", body: "{}" });
+    assert.equal(await response.text(), event);
+    const metric = (metrics.snapshot() as { recent: Array<{ responseObservationIncomplete?: boolean }> }).recent[0];
+    assert.equal(metric.responseObservationIncomplete, true);
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test("marks an unterminated SSE event as observation-incomplete while forwarding it unchanged", async () => {
+  const event = 'event: response.completed\ndata: {"type":"response.completed"}';
+  const upstream = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(event);
+  });
+  const upstreamPort = await listen(upstream);
+  const metrics = new MetricsStore();
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL(`http://127.0.0.1:${upstreamPort}/backend-api/codex`),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "structural",
+  }, metrics);
+  const proxyPort = await listen(proxy);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, { method: "POST", body: "{}" });
+    assert.equal(await response.text(), event);
+    const metric = (metrics.snapshot() as { recent: Array<{ responseObservationIncomplete?: boolean; terminalEventObserved?: boolean }> }).recent[0];
+    assert.equal(metric.responseObservationIncomplete, true);
+    assert.equal(metric.terminalEventObserved, false);
+  } finally {
     await close(proxy);
     await close(upstream);
   }
