@@ -192,7 +192,9 @@ async function forwardModelRequest(
 }
 
 export function createInlayServer(config: ProxyConfig, metrics = new MetricsStore()): Server {
-  const recurrenceTracker = config.recurrenceProbe === "exact-item" ? new ExactItemRecurrenceTracker() : undefined;
+  const recurrenceTracker = config.recurrenceProbe === "exact-item"
+    ? new ExactItemRecurrenceTracker(config.semanticInspection === "role-categories")
+    : undefined;
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       sendJson(response, 200, { status: "ok", upstreamConfigured: Boolean(config.upstreamBaseUrl), mode: "transparent" });

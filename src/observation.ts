@@ -67,12 +67,14 @@ export interface ExactItemRecurrenceRequest {
   previouslySeenCanonicalJsonBytes: number;
   previouslySeenItemTypeCounts: Record<string, number>;
   previouslySeenItemTypeCanonicalJsonBytes: Record<string, number>;
+  previouslySeenRoleCategoryCounts?: Record<string, number>;
   comparisonIncomplete: boolean;
   unavailableReason?: "content_encoded" | "input_limit" | "not_json" | "zstd_decode_failed" | "zstd_output_limit";
 }
 
 export interface ExactItemRecurrenceGroup {
   itemType: string;
+  semanticRoleCategory?: string;
   canonicalJsonBytes: number;
   firstObservationSequence: number;
   lastObservationSequence: number;
@@ -121,6 +123,24 @@ function recognizedInputItemType(value: unknown): string {
   return isRecord(value) && typeof value.type === "string" && RESPONSE_INPUT_ITEM_TYPES.has(value.type)
     ? value.type
     : "other";
+}
+
+/** Returns only closed, non-content-bearing protocol roles. Unknown type strings never escape. */
+function semanticRoleCategory(value: unknown): string {
+  if (!isRecord(value)) return "unknown_item_shape";
+  const type = typeof value.type === "string" ? value.type : undefined;
+  if (type === "message") {
+    const role = typeof value.role === "string" ? value.role : undefined;
+    if (role === "user") return "message_user";
+    if (role === "assistant") return "message_assistant";
+    if (role === "developer" || role === "system") return "message_system_or_developer";
+    return "message_other_role";
+  }
+  if (type === "reasoning") return "reasoning_state";
+  if (type === "item_reference" || type === "compaction" || type === "configuration_update") return "protocol_state";
+  if (type === "function_call" || type === "computer_call" || type === "web_search_call" || type === "file_search_call" || type === "code_interpreter_call" || type === "image_generation_call" || type === "tool_search_call" || type === "mcp_call" || type === "program") return "known_tool_call";
+  if (type === "function_call_output" || type === "computer_call_output" || type === "tool_search_output" || type === "program_output") return "known_tool_output";
+  return type === undefined ? "unknown_item_shape" : "unknown_item_type";
 }
 
 function canonicalizeJson(value: unknown): unknown {
@@ -190,6 +210,7 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
 
 interface InternalExactItemGroup {
   itemType: string;
+  semanticRoleCategory?: string;
   canonicalJsonBytes: number;
   firstObservationSequence: number;
   lastObservationSequence: number;
@@ -206,6 +227,11 @@ export class ExactItemRecurrenceTracker {
   #key = randomBytes(32);
   #groups = new Map<string, InternalExactItemGroup>();
   #comparisonIncomplete = false;
+  #includeSemanticRoleCategories: boolean;
+
+  constructor(includeSemanticRoleCategories = false) {
+    this.#includeSemanticRoleCategories = includeSemanticRoleCategories;
+  }
 
   observe(
     observationSequence: number,
@@ -220,6 +246,7 @@ export class ExactItemRecurrenceTracker {
         previouslySeenCanonicalJsonBytes: 0,
         previouslySeenItemTypeCounts: {},
         previouslySeenItemTypeCanonicalJsonBytes: {},
+        ...(this.#includeSemanticRoleCategories ? { previouslySeenRoleCategoryCounts: {} } : {}),
         comparisonIncomplete: payload.unavailableReason !== undefined || this.#comparisonIncomplete,
         unavailableReason: payload.unavailableReason,
       };
@@ -232,11 +259,13 @@ export class ExactItemRecurrenceTracker {
       previouslySeenCanonicalJsonBytes: 0,
       previouslySeenItemTypeCounts: {},
       previouslySeenItemTypeCanonicalJsonBytes: {},
+      ...(this.#includeSemanticRoleCategories ? { previouslySeenRoleCategoryCounts: {} } : {}),
       comparisonIncomplete: this.#comparisonIncomplete,
     };
 
     for (const item of input) {
       const itemType = recognizedInputItemType(item);
+      const roleCategory = this.#includeSemanticRoleCategories ? semanticRoleCategory(item) : undefined;
       const canonical = canonicalJson(item);
       const canonicalBytes = Buffer.byteLength(canonical, "utf8");
       const digest = createHmac("sha256", this.#key).update(canonical, "utf8").digest("hex");
@@ -248,6 +277,9 @@ export class ExactItemRecurrenceTracker {
         result.previouslySeenCanonicalJsonBytes += canonicalBytes;
         result.previouslySeenItemTypeCounts[itemType] = (result.previouslySeenItemTypeCounts[itemType] ?? 0) + 1;
         result.previouslySeenItemTypeCanonicalJsonBytes[itemType] = (result.previouslySeenItemTypeCanonicalJsonBytes[itemType] ?? 0) + canonicalBytes;
+        if (roleCategory && result.previouslySeenRoleCategoryCounts) {
+          result.previouslySeenRoleCategoryCounts[roleCategory] = (result.previouslySeenRoleCategoryCounts[roleCategory] ?? 0) + 1;
+        }
       }
 
       if (existing) {
@@ -267,6 +299,7 @@ export class ExactItemRecurrenceTracker {
 
       this.#groups.set(digest, {
         itemType,
+        semanticRoleCategory: roleCategory,
         canonicalJsonBytes: canonicalBytes,
         firstObservationSequence: observationSequence,
         lastObservationSequence: observationSequence,
