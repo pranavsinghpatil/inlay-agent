@@ -6,6 +6,7 @@ import { copyResponseHeaders, forwardHeaders, readBody, sendJson } from "./http.
 import { MetricsStore } from "./metrics.ts";
 import {
   deriveResponsesRequestStructure,
+  ExactItemRecurrenceTracker,
   observeZstdResponsesRequestStructure,
   ResponsesStreamObserver,
 } from "./observation.ts";
@@ -30,6 +31,7 @@ async function forwardModelRequest(
   request: IncomingMessage,
   response: ServerResponse,
   upstreamPath: SupportedUpstreamPath,
+  recurrenceTracker?: ExactItemRecurrenceTracker,
 ): Promise<void> {
   if (!config.upstreamBaseUrl) {
     sendJson(response, 503, {
@@ -66,6 +68,9 @@ async function forwardModelRequest(
   const requestStructureUnavailableReason = !observe || requestStructure ? undefined
     : contentEncoding === "identity" ? "not_json"
     : zstdObservation?.unavailableReason ?? "content_encoded";
+  const exactItemRecurrence = recurrenceTracker && observationSequence !== undefined && contentEncoding !== undefined
+    ? recurrenceTracker.observe(observationSequence, body.bytes, contentEncoding)
+    : undefined;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), config.upstreamTimeoutMs);
@@ -130,6 +135,7 @@ async function forwardModelRequest(
       responseStatus: upstream.status,
       requestStructure,
       requestStructureUnavailableReason,
+      exactItemRecurrence,
       usage: stream?.usage,
       ...(observe ? {
         completed: true,
@@ -157,6 +163,7 @@ async function forwardModelRequest(
       errorCategory: clientDisconnected ? "client_disconnect" : isTimeout ? "upstream_timeout" : "upstream_unavailable",
       requestStructure,
       requestStructureUnavailableReason,
+      exactItemRecurrence,
       usage: stream?.usage,
       ...(observe ? {
         completed: false,
@@ -185,21 +192,25 @@ async function forwardModelRequest(
 }
 
 export function createInlayServer(config: ProxyConfig, metrics = new MetricsStore()): Server {
+  const recurrenceTracker = config.recurrenceProbe === "exact-item" ? new ExactItemRecurrenceTracker() : undefined;
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       sendJson(response, 200, { status: "ok", upstreamConfigured: Boolean(config.upstreamBaseUrl), mode: "transparent" });
       return;
     }
     if (request.method === "GET" && request.url === "/metrics") {
-      sendJson(response, 200, metrics.snapshot());
+      sendJson(response, 200, {
+        ...metrics.snapshot(),
+        ...(recurrenceTracker ? { exactItemRecurrence: recurrenceTracker.snapshot() } : {}),
+      });
       return;
     }
     if (request.method === "POST" && request.url === "/v1/chat/completions") {
-      await forwardModelRequest(config, metrics, request, response, "chat/completions");
+      await forwardModelRequest(config, metrics, request, response, "chat/completions", recurrenceTracker);
       return;
     }
     if (request.method === "POST" && request.url === "/v1/responses") {
-      await forwardModelRequest(config, metrics, request, response, "responses");
+      await forwardModelRequest(config, metrics, request, response, "responses", recurrenceTracker);
       return;
     }
     sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions, POST /v1/responses." } });

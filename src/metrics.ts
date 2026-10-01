@@ -1,4 +1,4 @@
-import type { ProviderUsage, RequestStructure, RequestStructureUnavailableReason } from "./observation.ts";
+import type { ExactItemRecurrenceRequest, ProviderUsage, RequestStructure, RequestStructureUnavailableReason } from "./observation.ts";
 
 export interface RequestMetric {
   /** Monotonic for structural `/v1/responses` observations in this proxy process only. */
@@ -21,6 +21,7 @@ export interface RequestMetric {
   errorCategory?: "invalid_request" | "upstream_unavailable" | "upstream_timeout" | "client_disconnect" | "internal";
   requestStructure?: RequestStructure;
   requestStructureUnavailableReason?: RequestStructureUnavailableReason;
+  exactItemRecurrence?: ExactItemRecurrenceRequest;
   usage?: ProviderUsage;
 }
 

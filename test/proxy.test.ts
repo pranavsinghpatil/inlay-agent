@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { zstdCompressSync } from "node:zlib";
 import { createInlayServer } from "../src/app.ts";
 import { MetricsStore } from "../src/metrics.ts";
-import { deriveResponsesRequestStructure, MAX_ZSTD_OBSERVATION_BYTES } from "../src/observation.ts";
+import { deriveResponsesRequestStructure, ExactItemRecurrenceTracker, MAX_EXACT_ITEM_RECURRENCE_BYTES, MAX_ZSTD_OBSERVATION_BYTES } from "../src/observation.ts";
 
 async function listen(server: Server): Promise<number> {
   server.listen(0, "127.0.0.1");
@@ -81,6 +81,64 @@ test("groups unknown input item types as other without retaining their type stri
   assert.deepEqual(structure?.inputItemTypeCounts, { other: 1 });
   assert.ok((structure?.inputItemTypeCanonicalJsonBytes?.other ?? 0) > 0);
   assert.doesNotMatch(JSON.stringify(structure), /PRIVATE_UNRECOGNIZED_TYPE|PRIVATE_CONTENT/);
+});
+
+test("reports aggregate exact-item recurrence without retaining scalar values or fingerprints", () => {
+  const tracker = new ExactItemRecurrenceTracker();
+  const item = { type: "function_call_output", call_id: "PRIVATE_CALL_ID", output: "PRIVATE_TOOL_OUTPUT" };
+  const first = tracker.observe(1, Buffer.from(JSON.stringify({ input: [item] })), "identity");
+  const second = tracker.observe(2, Buffer.from(JSON.stringify({ input: [{ output: "PRIVATE_TOOL_OUTPUT", type: "function_call_output", call_id: "PRIVATE_CALL_ID" }] })), "identity");
+  const summary = tracker.snapshot();
+
+  assert.equal(first.previouslySeenItemCount, 0);
+  assert.equal(second.previouslySeenItemCount, 1);
+  assert.equal(second.previouslySeenItemTypeCounts.function_call_output, 1);
+  assert.equal(summary.recurringGroupCount, 1);
+  assert.deepEqual(summary.groups[0] && {
+    itemType: summary.groups[0].itemType,
+    firstObservationSequence: summary.groups[0].firstObservationSequence,
+    lastObservationSequence: summary.groups[0].lastObservationSequence,
+    distinctRequestCount: summary.groups[0].distinctRequestCount,
+  }, {
+    itemType: "function_call_output",
+    firstObservationSequence: 1,
+    lastObservationSequence: 2,
+    distinctRequestCount: 2,
+  });
+  assert.doesNotMatch(JSON.stringify({ first, second, summary }), /PRIVATE_CALL_ID|PRIVATE_TOOL_OUTPUT|[a-f0-9]{64}/);
+});
+
+test("bounds exact-item recurrence input without retaining malformed content", () => {
+  const tracker = new ExactItemRecurrenceTracker();
+  const observation = tracker.observe(1, Buffer.alloc(MAX_EXACT_ITEM_RECURRENCE_BYTES + 1, 0x61), "identity");
+
+  assert.equal(observation.unavailableReason, "input_limit");
+  assert.equal(observation.comparisonIncomplete, true);
+  assert.equal(tracker.snapshot().comparisonIncomplete, false);
+});
+
+test("correlates zstd exact-item recurrence without exposing payload values", () => {
+  const tracker = new ExactItemRecurrenceTracker();
+  const compressed = zstdCompressSync(Buffer.from(JSON.stringify({
+    input: [{ type: "message", content: "ZSTD_PRIVATE_RECURRENCE_CONTENT" }],
+  })));
+
+  tracker.observe(1, compressed, "zstd");
+  const second = tracker.observe(2, compressed, "zstd");
+  const summary = tracker.snapshot();
+
+  assert.equal(second.previouslySeenItemCount, 1);
+  assert.equal(summary.recurringGroupCount, 1);
+  assert.doesNotMatch(JSON.stringify({ second, summary }), /ZSTD_PRIVATE_RECURRENCE_CONTENT/);
+});
+
+test("marks malformed exact-item recurrence input incomplete without retaining it", () => {
+  const tracker = new ExactItemRecurrenceTracker();
+  const observation = tracker.observe(1, Buffer.from("PRIVATE_NOT_A_ZSTD_FRAME"), "zstd");
+
+  assert.equal(observation.unavailableReason, "zstd_decode_failed");
+  assert.equal(observation.comparisonIncomplete, true);
+  assert.doesNotMatch(JSON.stringify(observation), /PRIVATE_NOT_A_ZSTD_FRAME/);
 });
 
 test("forwards an OpenAI-compatible streaming response without transforming it", async () => {

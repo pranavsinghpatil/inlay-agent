@@ -1,8 +1,12 @@
 import { StringDecoder } from "node:string_decoder";
+import { createHmac, randomBytes } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
 
 const MAX_SSE_EVENT_CHARS = 64 * 1024;
 export const MAX_ZSTD_OBSERVATION_BYTES = 1024 * 1024;
+export const MAX_EXACT_ITEM_RECURRENCE_BYTES = 1024 * 1024;
+const MAX_EXACT_ITEM_GROUPS = 512;
+const MAX_RECORDED_RECURRING_GROUPS = 64;
 
 const RESPONSE_TOP_LEVEL_FIELDS = new Set([
   "background",
@@ -57,6 +61,32 @@ export interface RequestStructure {
   inputItemTypeCanonicalJsonBytes?: Record<string, number>;
 }
 
+export interface ExactItemRecurrenceRequest {
+  comparedItemCount: number;
+  previouslySeenItemCount: number;
+  previouslySeenCanonicalJsonBytes: number;
+  previouslySeenItemTypeCounts: Record<string, number>;
+  previouslySeenItemTypeCanonicalJsonBytes: Record<string, number>;
+  comparisonIncomplete: boolean;
+  unavailableReason?: "content_encoded" | "input_limit" | "not_json" | "zstd_decode_failed" | "zstd_output_limit";
+}
+
+export interface ExactItemRecurrenceGroup {
+  itemType: string;
+  canonicalJsonBytes: number;
+  firstObservationSequence: number;
+  lastObservationSequence: number;
+  distinctRequestCount: number;
+  occurrenceCount: number;
+}
+
+export interface ExactItemRecurrenceSummary {
+  recurringGroupCount: number;
+  groups: ExactItemRecurrenceGroup[];
+  groupsTruncated: boolean;
+  comparisonIncomplete: boolean;
+}
+
 export type RequestStructureUnavailableReason =
   | "content_encoded"
   | "not_json"
@@ -87,6 +117,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function recognizedInputItemType(value: unknown): string {
+  return isRecord(value) && typeof value.type === "string" && RESPONSE_INPUT_ITEM_TYPES.has(value.type)
+    ? value.type
+    : "other";
+}
+
 function canonicalizeJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalizeJson);
   if (!isRecord(value)) return value;
@@ -103,15 +139,23 @@ function canonicalJsonBytes(value: unknown): number {
   return encoded === undefined ? 0 : Buffer.byteLength(encoded, "utf8");
 }
 
-/** Derives content-free structure from a Responses request already buffered for forwarding. */
-export function deriveResponsesRequestStructure(body: Buffer): RequestStructure | undefined {
-  let payload: unknown;
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalizeJson(value)) ?? "";
+}
+
+function parseJsonRecord(body: Buffer): Record<string, unknown> | undefined {
   try {
-    payload = JSON.parse(body.toString("utf8"));
+    const payload: unknown = JSON.parse(body.toString("utf8"));
+    return isRecord(payload) ? payload : undefined;
   } catch {
     return undefined;
   }
-  if (!isRecord(payload)) return undefined;
+}
+
+/** Derives content-free structure from a Responses request already buffered for forwarding. */
+export function deriveResponsesRequestStructure(body: Buffer): RequestStructure | undefined {
+  const payload = parseJsonRecord(body);
+  if (!payload) return undefined;
 
   const fields = new Map<string, TopLevelFieldMetric>();
   for (const [key, value] of Object.entries(payload)) {
@@ -132,9 +176,7 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
     const inputItemTypeCounts: Record<string, number> = {};
     const inputItemTypeCanonicalJsonBytes: Record<string, number> = {};
     for (const item of payload.input) {
-      const type = isRecord(item) && typeof item.type === "string" && RESPONSE_INPUT_ITEM_TYPES.has(item.type)
-        ? item.type
-        : "other";
+      const type = recognizedInputItemType(item);
       inputItemTypeCounts[type] = (inputItemTypeCounts[type] ?? 0) + 1;
       inputItemTypeCanonicalJsonBytes[type] = (inputItemTypeCanonicalJsonBytes[type] ?? 0) + canonicalJsonBytes(item);
     }
@@ -144,6 +186,131 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
   }
 
   return structure;
+}
+
+interface InternalExactItemGroup {
+  itemType: string;
+  canonicalJsonBytes: number;
+  firstObservationSequence: number;
+  lastObservationSequence: number;
+  distinctRequestCount: number;
+  occurrenceCount: number;
+}
+
+/**
+ * Correlates byte-identical canonical input items only while this process is alive.
+ * The keyed HMAC digest and its random key never leave this instance; metrics expose
+ * only aggregate type, size, and sequence-span information.
+ */
+export class ExactItemRecurrenceTracker {
+  #key = randomBytes(32);
+  #groups = new Map<string, InternalExactItemGroup>();
+  #comparisonIncomplete = false;
+
+  observe(
+    observationSequence: number,
+    body: Buffer,
+    contentEncoding: "identity" | "br" | "deflate" | "gzip" | "zstd" | "other",
+  ): ExactItemRecurrenceRequest {
+    const payload = this.#decode(body, contentEncoding);
+    if (!payload.record) {
+      return {
+        comparedItemCount: 0,
+        previouslySeenItemCount: 0,
+        previouslySeenCanonicalJsonBytes: 0,
+        previouslySeenItemTypeCounts: {},
+        previouslySeenItemTypeCanonicalJsonBytes: {},
+        comparisonIncomplete: payload.unavailableReason !== undefined || this.#comparisonIncomplete,
+        unavailableReason: payload.unavailableReason,
+      };
+    }
+
+    const input = Array.isArray(payload.record.input) ? payload.record.input : [];
+    const result: ExactItemRecurrenceRequest = {
+      comparedItemCount: 0,
+      previouslySeenItemCount: 0,
+      previouslySeenCanonicalJsonBytes: 0,
+      previouslySeenItemTypeCounts: {},
+      previouslySeenItemTypeCanonicalJsonBytes: {},
+      comparisonIncomplete: this.#comparisonIncomplete,
+    };
+
+    for (const item of input) {
+      const itemType = recognizedInputItemType(item);
+      const canonical = canonicalJson(item);
+      const canonicalBytes = Buffer.byteLength(canonical, "utf8");
+      const digest = createHmac("sha256", this.#key).update(canonical, "utf8").digest("hex");
+      const existing = this.#groups.get(digest);
+      result.comparedItemCount += 1;
+
+      if (existing && existing.lastObservationSequence < observationSequence) {
+        result.previouslySeenItemCount += 1;
+        result.previouslySeenCanonicalJsonBytes += canonicalBytes;
+        result.previouslySeenItemTypeCounts[itemType] = (result.previouslySeenItemTypeCounts[itemType] ?? 0) + 1;
+        result.previouslySeenItemTypeCanonicalJsonBytes[itemType] = (result.previouslySeenItemTypeCanonicalJsonBytes[itemType] ?? 0) + canonicalBytes;
+      }
+
+      if (existing) {
+        existing.occurrenceCount += 1;
+        if (existing.lastObservationSequence !== observationSequence) {
+          existing.lastObservationSequence = observationSequence;
+          existing.distinctRequestCount += 1;
+        }
+        continue;
+      }
+
+      if (this.#groups.size >= MAX_EXACT_ITEM_GROUPS) {
+        this.#comparisonIncomplete = true;
+        result.comparisonIncomplete = true;
+        continue;
+      }
+
+      this.#groups.set(digest, {
+        itemType,
+        canonicalJsonBytes: canonicalBytes,
+        firstObservationSequence: observationSequence,
+        lastObservationSequence: observationSequence,
+        distinctRequestCount: 1,
+        occurrenceCount: 1,
+      });
+    }
+
+    return result;
+  }
+
+  snapshot(): ExactItemRecurrenceSummary {
+    const recurringGroups = [...this.#groups.values()]
+      .filter((group) => group.distinctRequestCount >= 2)
+      .sort((left, right) => right.canonicalJsonBytes * right.occurrenceCount - left.canonicalJsonBytes * left.occurrenceCount);
+
+    return {
+      recurringGroupCount: recurringGroups.length,
+      groups: recurringGroups.slice(0, MAX_RECORDED_RECURRING_GROUPS),
+      groupsTruncated: recurringGroups.length > MAX_RECORDED_RECURRING_GROUPS,
+      comparisonIncomplete: this.#comparisonIncomplete,
+    };
+  }
+
+  #decode(
+    body: Buffer,
+    contentEncoding: "identity" | "br" | "deflate" | "gzip" | "zstd" | "other",
+  ): { record?: Record<string, unknown>; unavailableReason?: ExactItemRecurrenceRequest["unavailableReason"] } {
+    if (contentEncoding === "identity") {
+      if (body.length > MAX_EXACT_ITEM_RECURRENCE_BYTES) return { unavailableReason: "input_limit" };
+      const record = parseJsonRecord(body);
+      return record ? { record } : { unavailableReason: "not_json" };
+    }
+    if (contentEncoding !== "zstd") return { unavailableReason: "content_encoded" };
+
+    try {
+      const decoded = zstdDecompressSync(body, { maxOutputLength: MAX_EXACT_ITEM_RECURRENCE_BYTES });
+      const record = parseJsonRecord(decoded);
+      return record ? { record } : { unavailableReason: "not_json" };
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+      return { unavailableReason: code === "ERR_BUFFER_TOO_LARGE" ? "zstd_output_limit" : "zstd_decode_failed" };
+    }
+  }
 }
 
 /**

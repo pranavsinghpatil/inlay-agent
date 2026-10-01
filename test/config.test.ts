@@ -8,11 +8,21 @@ test("defaults to a loopback transparent proxy", () => {
   assert.equal(config.port, 8787);
   assert.equal(config.upstreamBaseUrl, undefined);
   assert.equal(config.observationMode, "off");
+  assert.equal(config.recurrenceProbe, "off");
 });
 
 test("enables structural observation only when explicitly requested", () => {
   assert.equal(loadConfig({ INLAY_OBSERVATION: "structural" }).observationMode, "structural");
   assert.throws(() => loadConfig({ INLAY_OBSERVATION: "enabled" }), /INLAY_OBSERVATION/);
+});
+
+test("requires explicit structural observation for exact-item recurrence", () => {
+  assert.equal(
+    loadConfig({ INLAY_OBSERVATION: "structural", INLAY_RECURRENCE_PROBE: "exact-item" }).recurrenceProbe,
+    "exact-item",
+  );
+  assert.throws(() => loadConfig({ INLAY_RECURRENCE_PROBE: "exact-item" }), /requires INLAY_OBSERVATION/);
+  assert.throws(() => loadConfig({ INLAY_RECURRENCE_PROBE: "anything" }), /INLAY_RECURRENCE_PROBE/);
 });
 
 test("rejects non-loopback binding", () => {
