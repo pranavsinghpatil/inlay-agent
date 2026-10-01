@@ -1,6 +1,8 @@
 import type { ProviderUsage, RequestStructure, RequestStructureUnavailableReason } from "./observation.ts";
 
 export interface RequestMetric {
+  /** Monotonic for structural `/v1/responses` observations in this proxy process only. */
+  observationSequence?: number;
   requestId: string;
   route: "/v1/chat/completions" | "/v1/responses";
   startedAt: string;
@@ -26,6 +28,12 @@ export class MetricsStore {
   #recent: RequestMetric[] = [];
   #totalRequests = 0;
   #totalRequestBytes = 0;
+  #nextObservationSequence = 0;
+
+  nextObservationSequence(): number {
+    this.#nextObservationSequence += 1;
+    return this.#nextObservationSequence;
+  }
 
   record(metric: RequestMetric): void {
     this.#totalRequests += 1;
