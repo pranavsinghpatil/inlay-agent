@@ -108,6 +108,32 @@ test("reports aggregate exact-item recurrence without retaining scalar values or
   assert.doesNotMatch(JSON.stringify({ first, second, summary }), /PRIVATE_CALL_ID|PRIVATE_TOOL_OUTPUT|[a-f0-9]{64}/);
 });
 
+test("classifies recurring items into fixed semantic roles without exposing raw types or values", () => {
+  const tracker = new ExactItemRecurrenceTracker(true);
+  const first = {
+    input: [
+      { type: "compaction", encrypted_content: "PRIVATE_PROTOCOL_STATE" },
+      { type: "PRIVATE_CUSTOM_TOOL", secret: "PRIVATE_UNKNOWN_VALUE" },
+      { type: "message", role: "developer", content: "PRIVATE_DEVELOPER_TEXT" },
+    ],
+  };
+  tracker.observe(1, Buffer.from(JSON.stringify(first)), "identity");
+  const repeated = tracker.observe(2, Buffer.from(JSON.stringify(first)), "identity");
+  const summary = tracker.snapshot();
+
+  assert.deepEqual(repeated.previouslySeenRoleCategoryCounts, {
+    protocol_state: 1,
+    unknown_item_type: 1,
+    message_system_or_developer: 1,
+  });
+  assert.deepEqual(summary.groups.map((group) => group.semanticRoleCategory).sort(), [
+    "message_system_or_developer",
+    "protocol_state",
+    "unknown_item_type",
+  ]);
+  assert.doesNotMatch(JSON.stringify({ repeated, summary }), /PRIVATE_PROTOCOL_STATE|PRIVATE_CUSTOM_TOOL|PRIVATE_UNKNOWN_VALUE|PRIVATE_DEVELOPER_TEXT/);
+});
+
 test("bounds exact-item recurrence input without retaining malformed content", () => {
   const tracker = new ExactItemRecurrenceTracker();
   const observation = tracker.observe(1, Buffer.alloc(MAX_EXACT_ITEM_RECURRENCE_BYTES + 1, 0x61), "identity");

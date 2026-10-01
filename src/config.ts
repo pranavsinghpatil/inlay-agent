@@ -6,6 +6,7 @@ export interface ProxyConfig {
   upstreamTimeoutMs: number;
   observationMode: "off" | "structural";
   recurrenceProbe?: "off" | "exact-item";
+  semanticInspection?: "off" | "role-categories";
 }
 
 function positiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -33,6 +34,14 @@ function recurrenceProbe(value: string | undefined): "off" | "exact-item" {
   return probe;
 }
 
+function semanticInspection(value: string | undefined): "off" | "role-categories" {
+  const inspection = value ?? "off";
+  if (inspection !== "off" && inspection !== "role-categories") {
+    throw new Error("INLAY_SEMANTIC_INSPECTION must be 'off' or 'role-categories'.");
+  }
+  return inspection;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const host = env.INLAY_HOST ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
@@ -50,8 +59,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
 
   const configuredObservationMode = observationMode(env.INLAY_OBSERVATION);
   const configuredRecurrenceProbe = recurrenceProbe(env.INLAY_RECURRENCE_PROBE);
+  const configuredSemanticInspection = semanticInspection(env.INLAY_SEMANTIC_INSPECTION);
   if (configuredRecurrenceProbe !== "off" && configuredObservationMode !== "structural") {
     throw new Error("INLAY_RECURRENCE_PROBE requires INLAY_OBSERVATION=structural.");
+  }
+  if (configuredSemanticInspection !== "off" && configuredRecurrenceProbe !== "exact-item") {
+    throw new Error("INLAY_SEMANTIC_INSPECTION requires INLAY_RECURRENCE_PROBE=exact-item.");
   }
 
   return {
@@ -62,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     upstreamTimeoutMs: positiveInteger(env.INLAY_UPSTREAM_TIMEOUT_MS, 120_000, "INLAY_UPSTREAM_TIMEOUT_MS"),
     observationMode: configuredObservationMode,
     recurrenceProbe: configuredRecurrenceProbe,
+    semanticInspection: configuredSemanticInspection,
   };
 }
 

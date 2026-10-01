@@ -25,6 +25,19 @@ test("requires explicit structural observation for exact-item recurrence", () =>
   assert.throws(() => loadConfig({ INLAY_RECURRENCE_PROBE: "anything" }), /INLAY_RECURRENCE_PROBE/);
 });
 
+test("requires exact-item recurrence for local semantic role inspection", () => {
+  assert.equal(
+    loadConfig({
+      INLAY_OBSERVATION: "structural",
+      INLAY_RECURRENCE_PROBE: "exact-item",
+      INLAY_SEMANTIC_INSPECTION: "role-categories",
+    }).semanticInspection,
+    "role-categories",
+  );
+  assert.throws(() => loadConfig({ INLAY_SEMANTIC_INSPECTION: "role-categories" }), /requires INLAY_RECURRENCE_PROBE/);
+  assert.throws(() => loadConfig({ INLAY_SEMANTIC_INSPECTION: "raw" }), /INLAY_SEMANTIC_INSPECTION/);
+});
+
 test("rejects non-loopback binding", () => {
   assert.throws(() => loadConfig({ INLAY_HOST: "0.0.0.0" }), /loopback-only/);
 });
