@@ -5,6 +5,7 @@ export interface ProxyConfig {
   maxBodyBytes: number;
   upstreamTimeoutMs: number;
   observationMode: "off" | "structural";
+  recurrenceProbe?: "off" | "exact-item";
 }
 
 function positiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -24,6 +25,14 @@ function observationMode(value: string | undefined): "off" | "structural" {
   return mode;
 }
 
+function recurrenceProbe(value: string | undefined): "off" | "exact-item" {
+  const probe = value ?? "off";
+  if (probe !== "off" && probe !== "exact-item") {
+    throw new Error("INLAY_RECURRENCE_PROBE must be 'off' or 'exact-item'.");
+  }
+  return probe;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const host = env.INLAY_HOST ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
@@ -39,13 +48,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     }
   }
 
+  const configuredObservationMode = observationMode(env.INLAY_OBSERVATION);
+  const configuredRecurrenceProbe = recurrenceProbe(env.INLAY_RECURRENCE_PROBE);
+  if (configuredRecurrenceProbe !== "off" && configuredObservationMode !== "structural") {
+    throw new Error("INLAY_RECURRENCE_PROBE requires INLAY_OBSERVATION=structural.");
+  }
+
   return {
     host,
     port: positiveInteger(env.INLAY_PORT, 8787, "INLAY_PORT"),
     upstreamBaseUrl,
     maxBodyBytes: positiveInteger(env.INLAY_MAX_BODY_BYTES, 10 * 1024 * 1024, "INLAY_MAX_BODY_BYTES"),
     upstreamTimeoutMs: positiveInteger(env.INLAY_UPSTREAM_TIMEOUT_MS, 120_000, "INLAY_UPSTREAM_TIMEOUT_MS"),
-    observationMode: observationMode(env.INLAY_OBSERVATION),
+    observationMode: configuredObservationMode,
+    recurrenceProbe: configuredRecurrenceProbe,
   };
 }
 
