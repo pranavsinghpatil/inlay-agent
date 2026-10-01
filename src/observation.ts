@@ -52,6 +52,7 @@ export interface RequestStructure {
   topLevelFields: TopLevelFieldMetric[];
   inputItemCount?: number;
   inputItemTypeCounts?: Record<string, number>;
+  inputItemTypeCanonicalJsonBytes?: Record<string, number>;
 }
 
 export type RequestStructureUnavailableReason =
@@ -126,14 +127,17 @@ export function deriveResponsesRequestStructure(body: Buffer): RequestStructure 
 
   if (Array.isArray(payload.input)) {
     const inputItemTypeCounts: Record<string, number> = {};
+    const inputItemTypeCanonicalJsonBytes: Record<string, number> = {};
     for (const item of payload.input) {
       const type = isRecord(item) && typeof item.type === "string" && RESPONSE_INPUT_ITEM_TYPES.has(item.type)
         ? item.type
         : "other";
       inputItemTypeCounts[type] = (inputItemTypeCounts[type] ?? 0) + 1;
+      inputItemTypeCanonicalJsonBytes[type] = (inputItemTypeCanonicalJsonBytes[type] ?? 0) + canonicalJsonBytes(item);
     }
     structure.inputItemCount = payload.input.length;
     structure.inputItemTypeCounts = inputItemTypeCounts;
+    structure.inputItemTypeCanonicalJsonBytes = inputItemTypeCanonicalJsonBytes;
   }
 
   return structure;

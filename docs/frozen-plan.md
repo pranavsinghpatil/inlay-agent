@@ -14,5 +14,7 @@ Non-negotiables: no public binding, no raw audit archive by default, fail open o
 
 ObservationPack is the next **eligibility hypothesis**, not an implementation commitment. The current Codex profile must first demonstrate recognized, materially repeated tool-result structure in successful runs. A three-run eligibility gate is exploratory only; it does not establish generality, efficiency, or safe removability.
 
+The eligibility observer reports a canonical JSON byte total for each approved Responses input-item category. It recursively sorts object keys, preserves array order, serializes transiently with `JSON.stringify`, and counts UTF-8 bytes. This is intentionally distinct from received wire bytes (often zstd-compressed) and provider-reported tokens.
+
 The clamp fixture is a development/regression smoke fixture. The rule-precedence fixture is quarantined until a new immutable one-defect baseline exists. No fixture becomes optimization evidence until its verifier contract and agent reliability are demonstrated repeatedly.
 
