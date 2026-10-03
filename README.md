@@ -1,8 +1,16 @@
-# Inlay Agent
+# Inlay
 
-Inlay is a local-first middleware and research prototype for making existing
-agentic coding workflows more observable and measurable. It sits between an
-existing harness and that harness's existing provider/backend:
+[![CI](https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml/badge.svg)](https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pranavsinghpatil/inlay-mware?display_name=tag&sort=semver)](https://github.com/pranavsinghpatil/inlay-mware/releases/tag/v0.1.0)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+<p align="center">
+  <img src="assets/inlay-mark.png" width="128" alt="Inlay layered middleware mark" />
+</p>
+
+**A local-first research middleware for making coding-agent workflows
+observable—without replacing the agent, changing its backend, or pretending
+unproven optimizations work.**
 
 ```text
 coding harness → Inlay → existing provider/backend
@@ -12,6 +20,10 @@ It is not a coding agent, agent runner, generic wrapper, universal harness
 router, credential manager, or established optimizer. Efficiency mechanisms
 remain research hypotheses; none is a released capability.
 
+> **The question Inlay is built for:** What is an agent actually sending,
+> waiting on, and repeating—and can a proposed improvement preserve task
+> success before anyone calls it an optimization?
+
 ## Why it exists
 
 Coding agents can accumulate provider context, tool history, requests, and
@@ -20,6 +32,21 @@ current purpose is narrower: transparently forward one validated profile and
 derive bounded, content-free measurements while independently checking task
 completion. Observed structural growth or recurrence is not semantic
 redundancy, removability, token savings, cost savings, or latency improvement.
+
+## The evidence-first loop
+
+```text
+transparent placement
+        ↓
+privacy-bounded measurement
+        ↓
+deterministic task verification
+        ↓
+research decision: test, reject, or stop
+```
+
+This is the difference between an “agent optimization” demo and an engineering
+claim you can defend in a design review or technical interview.
 
 ## Current validated profiles
 
@@ -33,6 +60,17 @@ The Pi content-free cross-boundary timeline does **not** have a completed
 trajectory: its latest launch exited before a supported provider request or
 harness action. Its cause is intentionally unknown because the probe retains
 no raw diagnostic content.
+
+## v0.1.0 at a glance
+
+| Ships | Does not ship |
+| --- | --- |
+| Transparent loopback middleware | Context pruning or request rewriting |
+| Codex Responses + narrow Pi alias evidence | An agent runner or universal harness router |
+| Bounded structural/zstd observation | Token, cost, latency, or tool-call reduction claims |
+| Sanitized measurement infrastructure and CI | A hidden raw-payload archive |
+
+**The result:** a small, runnable evidence baseline—not a hype-driven wrapper.
 
 ## Run the validated transport locally
 
@@ -56,9 +94,7 @@ Invoke-RestMethod http://127.0.0.1:8787/health
 
 For the validated Codex CLI experiment, configure Codex's existing
 process-level `openai_base_url` setting to `http://127.0.0.1:8787/v1`; its
-existing ChatGPT authentication continues to be owned by Codex. The precise
-task contracts and results are in the [Codex C2 baseline record](docs/research/c2-codex-clamp-baseline.md)
-and [Pi C2 baseline record](docs/research/pi-c2-valid-baseline.md).
+existing ChatGPT authentication continues to be owned by Codex.
 
 The public runtime surface is loopback-only:
 
@@ -95,6 +131,10 @@ These are three distinct quantities:
 | Compressed request bytes | Wire bytes when `Content-Encoding: zstd` | Neither decoded size nor tokens |
 | Canonical structural bytes | UTF-8 bytes after recursively sorting object keys, preserving array order, then `JSON.stringify` on a transient whitelisted value | Stable local structural-size proxy; not wire bytes, provider tokens, or billing |
 
+In plain English: Inlay can expose *structure and transport behavior*; it
+cannot see whether an item is semantically redundant, whether model reasoning
+is wasted, or whether a rewrite would preserve provider cache behavior.
+
 ## Privacy boundary
 
 Inlay does not persist raw request or response bodies. Structural decoding is
@@ -121,11 +161,10 @@ economics, provider-only backend latency, or model decision boundaries.
   gate and is retired as a release capability.
 - The content-free cross-boundary timeline measurement gate did not pass.
 
-The [research decision memo](docs/research/inlay-research-decision-memo.md)
-consolidates these findings and explicitly states that no optimization
-mechanism is currently evidence-eligible.
+The resulting position is deliberately conservative: no optimization mechanism
+is currently evidence-eligible.
 
-## Research, not marketing
+## Research trail, not marketing
 
 Inlay is a first public research/measurement prototype. Its evidence is
 profile- and task-specific. It makes no general multi-harness claim and no
@@ -133,6 +172,39 @@ claim of token, cost, latency, or tool-call reduction. Future work requires a
 new, mechanism-specific preservation contract and successful control/treatment
 evidence before a transformation is implemented.
 
-See [the interaction model](docs/architecture/interaction-model.md), [frozen
-plan](docs/frozen-plan.md), and the sanitized records in
-[docs/research](docs/research/).
+Negative results are retained on purpose: ObservationPack,
+Evidence-Preserving Reducer, and Online Context Compaction were not
+evidence-eligible for the observed Codex trajectory; Action Fusion v1 failed
+its capability gate; and the cross-boundary timeline measurement gate did not
+pass. Those are research findings, not features quietly swept under the rug.
+
+## Repository map
+
+```text
+src/              transparent transport, observation, and metrics
+extensions/       explicitly loaded Pi research adapters
+scripts/          reproducible C2 topology preflight
+test/             transport, lifecycle, privacy, and topology checks
+assets/           repository-owned visual identity
+```
+
+## Development
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm test
+pnpm typecheck
+git diff --check
+```
+
+CI runs the frozen install, test suite, and typecheck for every push and pull
+request.
+
+## Research provenance
+
+The full, sanitized experimental trail lives in a separate private research
+archive so this repository stays focused on a small runnable middleware
+baseline. The public claims above remain intentionally narrow: routing and
+bounded measurement are demonstrated for the stated profiles; semantic
+redundancy, removability, token savings, cost savings, and latency improvement
+are not.
