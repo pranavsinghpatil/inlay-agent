@@ -1,12 +1,17 @@
-# Inlay
-
-[![CI](https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml/badge.svg)](https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/pranavsinghpatil/inlay-mware?display_name=tag&sort=semver)](https://github.com/pranavsinghpatil/inlay-mware/releases/tag/v0.1.0)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<h1 align="center">
+  <img src="assets/inlay-mark.png" width="48" alt="Inlay layered middleware mark" valign="middle" />
+  <span>Inlay</span>
+</h1>
 
 <p align="center">
-  <img src="assets/inlay-mark.png" width="128" alt="Inlay layered middleware mark" />
-</p>
+  <a href="https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml"><img src="https://github.com/pranavsinghpatil/inlay-mware/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/pranavsinghpatil/inlay-mware/releases/tag/v0.1.0"><img src="https://img.shields.io/github/v/release/pranavsinghpatil/inlay-mware?display_name=tag&sort=semver" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" /></a>
+</p> 
+
+
+
+
 
 **A local-first research middleware for making coding-agent workflows
 observable—without replacing the agent, changing its backend, or pretending
