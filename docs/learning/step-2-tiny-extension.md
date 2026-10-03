@@ -13,7 +13,7 @@ corepack pnpm exec pi -e ./extensions/session-start-logger.ts "List the files in
 Expected first observation:
 
 ```text
-[inlay] Pi session started in D:\sol-harness
+[inlay] Pi session started in <project-directory>
 ```
 
 Stop after confirming that message and completing one simple read-only task. The next step is not started until this extension behavior is observed.

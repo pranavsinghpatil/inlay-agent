@@ -34,3 +34,12 @@ The local spool is Git-ignored, permissioned for the current user, capped at 64 
 ## Eligibility outcome
 
 The study is interesting only if a real existing-auth Pi session completes a deterministic task, produces an ordered lifecycle, and includes a successful edit immediately followed by an allowlisted verifier. A passing result merely justifies a separate design decision for a future, constrained compound-action experiment; it does not authorize fusion.
+
+## Controlled pilot status
+
+Pilot 1 of the constrained compound tool is invalidated by a model-facing
+treatment interface contract defect: its schema did not communicate that the
+exact replacement text must be unique. Its measurements must not be pooled with
+a revised Pilot 2. The revised contract retains the same policy, 8 KiB bounds,
+fixed verifier, treatment isolation, and no-fallback behavior; Pilot 2 must be
+newly frozen before any live run.

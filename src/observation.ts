@@ -110,6 +110,7 @@ export interface ProviderUsage {
 export interface ResponseStreamObservation {
   responseBytes: number;
   timeToFirstResponseBodyByteMs?: number;
+  timeToTerminalEventMs?: number;
   usage?: ProviderUsage;
   terminalEventObserved: boolean;
   responseObservationIncomplete: boolean;
@@ -393,6 +394,7 @@ export class ResponsesStreamObserver {
   #pending = "";
   #responseBytes = 0;
   #timeToFirstResponseBodyByteMs: number | undefined;
+  #timeToTerminalEventMs: number | undefined;
   #usage: ProviderUsage | undefined;
   #terminalEventObserved = false;
   #responseObservationIncomplete = false;
@@ -416,7 +418,7 @@ export class ResponsesStreamObserver {
       const event = this.#pending.slice(0, boundary);
       const boundaryLength = this.#pending.startsWith("\r\n", boundary) ? 4 : 2;
       this.#pending = this.#pending.slice(boundary + boundaryLength);
-      this.#observeEvent(event);
+      this.#observeEvent(event, elapsedMs);
     }
   }
 
@@ -424,6 +426,7 @@ export class ResponsesStreamObserver {
     return {
       responseBytes: this.#responseBytes,
       timeToFirstResponseBodyByteMs: this.#timeToFirstResponseBodyByteMs,
+      timeToTerminalEventMs: this.#timeToTerminalEventMs,
       usage: this.#usage,
       terminalEventObserved: this.#terminalEventObserved,
       responseObservationIncomplete: this.#responseObservationIncomplete,
@@ -439,11 +442,12 @@ export class ResponsesStreamObserver {
     }
   }
 
-  #observeEvent(event: string): void {
+  #observeEvent(event: string, elapsedMs: number): void {
     if (event.length > MAX_SSE_EVENT_CHARS) return;
     const lines = event.split(/\r?\n/);
     if (lines.some((line) => line.startsWith("event:") && line.slice("event:".length).trim() === "response.completed")) {
       this.#terminalEventObserved = true;
+      this.#timeToTerminalEventMs ??= elapsedMs;
     }
     const data = lines
       .filter((line) => line.startsWith("data:"))
@@ -453,7 +457,10 @@ export class ResponsesStreamObserver {
 
     try {
       const payload = JSON.parse(data);
-      if (isRecord(payload) && payload.type === "response.completed") this.#terminalEventObserved = true;
+      if (isRecord(payload) && payload.type === "response.completed") {
+        this.#terminalEventObserved = true;
+        this.#timeToTerminalEventMs ??= elapsedMs;
+      }
       const usage = extractUsage(payload);
       if (usage) this.#usage = { ...this.#usage, ...usage };
     } catch {

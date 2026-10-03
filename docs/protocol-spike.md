@@ -1,10 +1,16 @@
 # Pi protocol spike — diagnostic-only
 
-Status: deferred. This extension is not part of the validated Codex profile and is not required to run Inlay.
+Status: diagnostic-only. This extension is not part of the validated Codex
+profile and is not required to run Inlay. Pi has one separate validated C2
+capability baseline through a different explicitly loaded adapter; that does
+not validate this protocol-spike extension or establish general Pi support.
 
 ## Pinned test contract
 
-Pi must first be tested through Pi's own existing-auth provider mechanism; Inlay must not require a separate API key or become a provider replacement. A live Inlay/Pi compatibility result is required before support is claimed.
+Pi must be tested through Pi's own existing-auth provider mechanism; Inlay must
+not require a separate API key or become a provider replacement. A live result
+for this exact diagnostic extension is required before this extension itself is
+described as validated.
 
 ## Explicit, unvalidated diagnostic procedure
 

@@ -9,12 +9,26 @@ import {
   ExactItemRecurrenceTracker,
   observeZstdResponsesRequestStructure,
   ResponsesStreamObserver,
+  type ResponseStreamObservation,
 } from "./observation.ts";
 
 type SupportedUpstreamPath = "chat/completions" | "responses";
+type IncomingRoute = "/v1/chat/completions" | "/v1/responses" | "/v1/codex/responses";
 
-function downstreamRoute(upstreamPath: SupportedUpstreamPath): "/v1/chat/completions" | "/v1/responses" {
-  return `/v1/${upstreamPath}`;
+/** Converts elapsed stream facts into local wall-clock timestamps for one opt-in experiment. */
+function contentFreeTimeline(
+  requestStartedAtMs: number,
+  timeToUpstreamHeadersMs: number | undefined,
+  stream: ResponseStreamObservation | undefined,
+) {
+  return {
+    requestStartedAtMs,
+    ...(timeToUpstreamHeadersMs !== undefined ? { upstreamHeadersAtMs: requestStartedAtMs + Math.round(timeToUpstreamHeadersMs) } : {}),
+    ...(stream?.timeToFirstResponseBodyByteMs !== undefined ? { firstResponseBodyByteAtMs: requestStartedAtMs + Math.round(stream.timeToFirstResponseBodyByteMs) } : {}),
+    ...(stream?.timeToTerminalEventMs !== undefined ? { terminalEventAtMs: requestStartedAtMs + Math.round(stream.timeToTerminalEventMs) } : {}),
+    completedAtMs: Date.now(),
+    retryClassification: "unavailable" as const,
+  };
 }
 
 function requestContentEncoding(request: IncomingMessage): "identity" | "br" | "deflate" | "gzip" | "zstd" | "other" {
@@ -31,6 +45,7 @@ async function forwardModelRequest(
   request: IncomingMessage,
   response: ServerResponse,
   upstreamPath: SupportedUpstreamPath,
+  incomingRoute: IncomingRoute,
   recurrenceTracker?: ExactItemRecurrenceTracker,
 ): Promise<void> {
   if (!config.upstreamBaseUrl) {
@@ -44,18 +59,20 @@ async function forwardModelRequest(
   }
 
   const startedAt = new Date().toISOString();
+  const requestStartedAtMs = Date.now();
   const started = performance.now();
   let body;
   try {
     body = await readBody(request, config.maxBodyBytes);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid request body.";
-    metrics.record({ requestId: "unavailable", route: downstreamRoute(upstreamPath), startedAt, durationMs: performance.now() - started, requestBytes: 0, errorCategory: "invalid_request" });
+    metrics.record({ requestId: "unavailable", route: incomingRoute, startedAt, durationMs: performance.now() - started, requestBytes: 0, errorCategory: "invalid_request" });
     sendJson(response, 413, { error: { code: "inlay_request_too_large", message } });
     return;
   }
 
   const observe = config.observationMode === "structural" && upstreamPath === "responses";
+  const observeTimeline = observe && config.timelineMode === "content-free";
   const observationSequence = observe ? metrics.nextObservationSequence() : undefined;
   const contentEncoding = observe ? requestContentEncoding(request) : undefined;
   const identityRequestStructure = observe && contentEncoding === "identity"
@@ -124,7 +141,7 @@ async function forwardModelRequest(
     metrics.record({
       observationSequence,
       requestId: body.requestId,
-      route: downstreamRoute(upstreamPath),
+      route: incomingRoute,
       startedAt,
       durationMs: performance.now() - started,
       timeToUpstreamHeadersMs,
@@ -137,6 +154,9 @@ async function forwardModelRequest(
       requestStructureUnavailableReason,
       exactItemRecurrence,
       usage: stream?.usage,
+      ...(observeTimeline ? {
+        timeline: contentFreeTimeline(requestStartedAtMs, timeToUpstreamHeadersMs, stream),
+      } : {}),
       ...(observe ? {
         completed: true,
         cancelled: false,
@@ -151,7 +171,7 @@ async function forwardModelRequest(
     metrics.record({
       observationSequence,
       requestId: body.requestId,
-      route: downstreamRoute(upstreamPath),
+      route: incomingRoute,
       startedAt,
       durationMs: performance.now() - started,
       timeToUpstreamHeadersMs,
@@ -165,6 +185,9 @@ async function forwardModelRequest(
       requestStructureUnavailableReason,
       exactItemRecurrence,
       usage: stream?.usage,
+      ...(observeTimeline ? {
+        timeline: contentFreeTimeline(requestStartedAtMs, timeToUpstreamHeadersMs, stream),
+      } : {}),
       ...(observe ? {
         completed: false,
         cancelled: clientDisconnected,
@@ -208,13 +231,17 @@ export function createInlayServer(config: ProxyConfig, metrics = new MetricsStor
       return;
     }
     if (request.method === "POST" && request.url === "/v1/chat/completions") {
-      await forwardModelRequest(config, metrics, request, response, "chat/completions", recurrenceTracker);
+      await forwardModelRequest(config, metrics, request, response, "chat/completions", "/v1/chat/completions", recurrenceTracker);
       return;
     }
     if (request.method === "POST" && request.url === "/v1/responses") {
-      await forwardModelRequest(config, metrics, request, response, "responses", recurrenceTracker);
+      await forwardModelRequest(config, metrics, request, response, "responses", "/v1/responses", recurrenceTracker);
       return;
     }
-    sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions, POST /v1/responses." } });
+    if (request.method === "POST" && request.url === "/v1/codex/responses") {
+      await forwardModelRequest(config, metrics, request, response, "responses", "/v1/codex/responses", recurrenceTracker);
+      return;
+    }
+    sendJson(response, 404, { error: { code: "inlay_route_not_found", message: "Supported routes: GET /health, GET /metrics, POST /v1/chat/completions, POST /v1/responses, POST /v1/codex/responses." } });
   });
 }

@@ -238,7 +238,7 @@ test("forwards an OpenAI-compatible streaming response without transforming it",
   }
 });
 
-test("forwards a Codex Responses SSE request without interpreting it", async () => {
+test("forwards the exact Pi Codex Responses alias request without interpreting it", async () => {
   const requestBody = JSON.stringify({
     model: "test",
     stream: true,
@@ -272,11 +272,12 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     maxBodyBytes: 1024,
     upstreamTimeoutMs: 1_000,
     observationMode: "structural",
+    timelineMode: "content-free",
   }, metrics);
   const proxyPort = await listen(proxy);
 
   try {
-    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/codex/responses`, {
       method: "POST",
       headers: { authorization: "Bearer subscription-token", "content-type": "application/json" },
       body: requestBody,
@@ -307,13 +308,21 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
         terminalEventObserved?: boolean;
         timeToUpstreamHeadersMs?: number;
         timeToFirstResponseBodyByteMs?: number;
+        timeline?: {
+          requestStartedAtMs: number;
+          upstreamHeadersAtMs?: number;
+          firstResponseBodyByteAtMs?: number;
+          terminalEventAtMs?: number;
+          completedAtMs: number;
+          retryClassification: "unavailable";
+        };
         requestStructure?: { canonicalStructuralBytesTotal?: number; inputItemCount?: number; inputItemTypeCounts?: Record<string, number>; inputItemTypeCanonicalJsonBytes?: Record<string, number>; topLevelFields: Array<{ name: string }> };
         usage?: Record<string, number>;
       }>;
     };
     assert.equal(snapshot.totalRequests, 1);
     assert.equal(snapshot.recent[0].observationSequence, 1);
-    assert.equal(snapshot.recent[0].route, "/v1/responses");
+    assert.equal(snapshot.recent[0].route, "/v1/codex/responses");
     assert.equal(snapshot.recent[0].responseStatus, 200);
     assert.equal(snapshot.recent[0].responseBytes, Buffer.byteLength(firstEvent + completedEvent));
     assert.equal(snapshot.recent[0].completed, true);
@@ -321,6 +330,12 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
     assert.equal(snapshot.recent[0].terminalEventObserved, true);
     assert.ok(snapshot.recent[0].timeToUpstreamHeadersMs !== undefined);
     assert.ok(snapshot.recent[0].timeToFirstResponseBodyByteMs !== undefined);
+    assert.ok(snapshot.recent[0].timeline);
+    assert.ok((snapshot.recent[0].timeline?.upstreamHeadersAtMs ?? 0) >= snapshot.recent[0].timeline!.requestStartedAtMs);
+    assert.ok((snapshot.recent[0].timeline?.firstResponseBodyByteAtMs ?? 0) >= snapshot.recent[0].timeline!.requestStartedAtMs);
+    assert.ok((snapshot.recent[0].timeline?.terminalEventAtMs ?? 0) >= snapshot.recent[0].timeline!.requestStartedAtMs);
+    assert.ok(snapshot.recent[0].timeline!.completedAtMs >= snapshot.recent[0].timeline!.requestStartedAtMs);
+    assert.equal(snapshot.recent[0].timeline?.retryClassification, "unavailable");
     assert.deepEqual(snapshot.recent[0].usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20, cachedInputTokens: 3 });
     assert.equal(snapshot.recent[0].requestStructure?.inputItemCount, 2);
     assert.ok((snapshot.recent[0].requestStructure?.canonicalStructuralBytesTotal ?? 0) > 0);
@@ -332,6 +347,29 @@ test("forwards a Codex Responses SSE request without interpreting it", async () 
   } finally {
     await close(proxy);
     await close(upstream);
+  }
+});
+
+test("keeps Pi model discovery and non-POST alias requests unsupported", async () => {
+  const proxy = createInlayServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstreamBaseUrl: new URL("http://127.0.0.1:1/backend-api/codex"),
+    maxBodyBytes: 1024,
+    upstreamTimeoutMs: 1_000,
+    observationMode: "off",
+  });
+  const proxyPort = await listen(proxy);
+
+  try {
+    for (const path of ["/v1/models", "/v1/codex/responses"]) {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}${path}`);
+      assert.equal(response.status, 404);
+      const body = await response.json() as { error?: { code?: string } };
+      assert.equal(body.error?.code, "inlay_route_not_found");
+    }
+  } finally {
+    await close(proxy);
   }
 });
 

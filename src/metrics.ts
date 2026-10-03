@@ -1,10 +1,20 @@
 import type { ExactItemRecurrenceRequest, ProviderUsage, RequestStructure, RequestStructureUnavailableReason } from "./observation.ts";
 
+/** Content-free local timestamps emitted only by INLAY_TIMELINE=content-free. */
+export interface ContentFreeProviderTimeline {
+  requestStartedAtMs: number;
+  upstreamHeadersAtMs?: number;
+  firstResponseBodyByteAtMs?: number;
+  terminalEventAtMs?: number;
+  completedAtMs: number;
+  retryClassification: "unavailable";
+}
+
 export interface RequestMetric {
-  /** Monotonic for structural `/v1/responses` observations in this proxy process only. */
+  /** Monotonic for structural Responses observations in this proxy process only. */
   observationSequence?: number;
   requestId: string;
-  route: "/v1/chat/completions" | "/v1/responses";
+  route: "/v1/chat/completions" | "/v1/responses" | "/v1/codex/responses";
   startedAt: string;
   durationMs: number;
   timeToUpstreamHeadersMs?: number;
@@ -23,6 +33,7 @@ export interface RequestMetric {
   requestStructureUnavailableReason?: RequestStructureUnavailableReason;
   exactItemRecurrence?: ExactItemRecurrenceRequest;
   usage?: ProviderUsage;
+  timeline?: ContentFreeProviderTimeline;
 }
 
 export class MetricsStore {

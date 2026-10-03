@@ -9,6 +9,7 @@ test("defaults to a loopback transparent proxy", () => {
   assert.equal(config.upstreamBaseUrl, undefined);
   assert.equal(config.observationMode, "off");
   assert.equal(config.recurrenceProbe, "off");
+  assert.equal(config.timelineMode, "off");
 });
 
 test("enables structural observation only when explicitly requested", () => {
@@ -36,6 +37,12 @@ test("requires exact-item recurrence for local semantic role inspection", () => 
   );
   assert.throws(() => loadConfig({ INLAY_SEMANTIC_INSPECTION: "role-categories" }), /requires INLAY_RECURRENCE_PROBE/);
   assert.throws(() => loadConfig({ INLAY_SEMANTIC_INSPECTION: "raw" }), /INLAY_SEMANTIC_INSPECTION/);
+});
+
+test("requires structural observation for the content-free timeline", () => {
+  assert.equal(loadConfig({ INLAY_OBSERVATION: "structural", INLAY_TIMELINE: "content-free" }).timelineMode, "content-free");
+  assert.throws(() => loadConfig({ INLAY_TIMELINE: "content-free" }), /requires INLAY_OBSERVATION/);
+  assert.throws(() => loadConfig({ INLAY_OBSERVATION: "structural", INLAY_TIMELINE: "raw" }), /INLAY_TIMELINE/);
 });
 
 test("rejects non-loopback binding", () => {

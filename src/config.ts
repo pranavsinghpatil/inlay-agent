@@ -7,6 +7,7 @@ export interface ProxyConfig {
   observationMode: "off" | "structural";
   recurrenceProbe?: "off" | "exact-item";
   semanticInspection?: "off" | "role-categories";
+  timelineMode?: "off" | "content-free";
 }
 
 function positiveInteger(value: string | undefined, fallback: number, name: string): number {
@@ -42,6 +43,14 @@ function semanticInspection(value: string | undefined): "off" | "role-categories
   return inspection;
 }
 
+function timelineMode(value: string | undefined): "off" | "content-free" {
+  const mode = value ?? "off";
+  if (mode !== "off" && mode !== "content-free") {
+    throw new Error("INLAY_TIMELINE must be 'off' or 'content-free'.");
+  }
+  return mode;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const host = env.INLAY_HOST ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
@@ -60,11 +69,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const configuredObservationMode = observationMode(env.INLAY_OBSERVATION);
   const configuredRecurrenceProbe = recurrenceProbe(env.INLAY_RECURRENCE_PROBE);
   const configuredSemanticInspection = semanticInspection(env.INLAY_SEMANTIC_INSPECTION);
+  const configuredTimelineMode = timelineMode(env.INLAY_TIMELINE);
   if (configuredRecurrenceProbe !== "off" && configuredObservationMode !== "structural") {
     throw new Error("INLAY_RECURRENCE_PROBE requires INLAY_OBSERVATION=structural.");
   }
   if (configuredSemanticInspection !== "off" && configuredRecurrenceProbe !== "exact-item") {
     throw new Error("INLAY_SEMANTIC_INSPECTION requires INLAY_RECURRENCE_PROBE=exact-item.");
+  }
+  if (configuredTimelineMode !== "off" && configuredObservationMode !== "structural") {
+    throw new Error("INLAY_TIMELINE requires INLAY_OBSERVATION=structural.");
   }
 
   return {
@@ -76,6 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     observationMode: configuredObservationMode,
     recurrenceProbe: configuredRecurrenceProbe,
     semanticInspection: configuredSemanticInspection,
+    timelineMode: configuredTimelineMode,
   };
 }
 
